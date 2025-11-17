@@ -1,0 +1,3 @@
+[submodule "mariox/mario_vm"]
+	path = mariox/mario_vm
+	url = https://github.com/MisaZhu/mario_vm.git
