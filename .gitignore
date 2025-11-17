@@ -1,0 +1,11 @@
+*.o
+*.swp
+.DS_*
+.vscode/settings.json
+.vscode/configurationCache.log
+.vscode/dryrun.log
+.vscode/targets.log
+.deps
+build
+.xmake
+*.a
