@@ -1,5 +1,6 @@
 
 all: 
+	cd anim; make
 	cd emu; make
 	cd macintosh; make
 	cd sdl_gol; make
@@ -7,8 +8,10 @@ all:
 	cd gobang; make
 	cd mandelbrot; make
 	cd calculator; make
+	cd saver; make
 
 clean: 
+	cd anim; make clean
 	cd emu; make clean
 	cd macintosh; make clean
 	cd sdl_gol; make clean
@@ -16,3 +19,4 @@ clean:
 	cd gobang; make clean
 	cd mandelbrot; make clean
 	cd calculator; make clean
+	cd saver; make clean
