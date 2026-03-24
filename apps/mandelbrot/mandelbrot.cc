@@ -80,7 +80,7 @@ protected:
                 // 根据迭代次数设置颜色
                 uint8_t colorValue = (iteration == maxIterations) ? 0 : (255 * iteration / maxIterations);
                 uint32_t color = 0xff000000|(colorValue << 16) | (0 << 8) | colorValue;
-                graph_pixel(g, x, y, color);
+                graph_set_pixel(g, x, y, color);
             }
         }
     }
