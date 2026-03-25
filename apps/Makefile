@@ -1,6 +1,5 @@
 
 all: 
-	cd anim; make
 	cd emu; make
 	cd macintosh; make
 	cd sdl_gol; make
@@ -11,7 +10,6 @@ all:
 	cd saver; make
 
 clean: 
-	cd anim; make clean
 	cd emu; make clean
 	cd macintosh; make clean
 	cd sdl_gol; make clean
