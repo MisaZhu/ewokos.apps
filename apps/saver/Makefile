@@ -9,7 +9,7 @@ LDFLAGS += -L $(EXTRA_LIBS_DIR)/lib
 TASK_OBJS = main.o
 
 TASK = saver
-BUILD_DIR = $(SW_ROOT_DIR)/build/$(HW)/apps/$(TASK)
+BUILD_DIR = $(EWOKOS_ROOT_DIR)/system/build/$(HW)/rootfs/apps/$(TASK)
 
 all: $(TASK)
 

@@ -9,7 +9,7 @@ LDFLAGS += -L $(EXTRA_LIBS_DIR)/lib
 TASK_OBJS = mandelbrot.o
 
 TASK = mandelbrot
-BUILD_DIR = $(SW_ROOT_DIR)/build/$(HW)/apps/$(TASK)
+BUILD_DIR = $(EWOKOS_ROOT_DIR)/system/build/$(HW)/rootfs/apps/$(TASK)
 
 all: $(TASK)
 

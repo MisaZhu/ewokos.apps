@@ -1,7 +1,6 @@
 SW_ROOT_DIR=../..
-SYS_DIR=$(SW_ROOT_DIR)/../system
+SYS_DIR=$(EWOKOS_ROOT_DIR)/system
 include $(SW_ROOT_DIR)/make.inc
-include $(SYS_DIR)/platform/$(ARCH)/make.rule
 
 BUILD_DIR = $(SYS_DIR)/build/$(HW)
 TARGET_DIR = $(BUILD_DIR)/rootfs
@@ -11,7 +10,7 @@ LDFLAGS = -L$(BUILD_DIR)/lib
 CFLAGS += -Iinclude -I $(BUILD_DIR)/include
 
 TASK_OBJS = src/cglmdemo.o
-TASK_DIR = $(SW_ROOT_DIR)/build/$(HW)/bin
+TASK_DIR = $(TARGET_DIR)/bin
 
 TASK = cglmdemo
 
