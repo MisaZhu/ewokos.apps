@@ -371,7 +371,7 @@ int main(int argc, char *argv[])
 
 	//init emulator
 	if(argc < 2){
-			path = X::getResName("roms/nes1200in1.nes");
+			path = X::getResFullName("roms/nes1200in1.nes");
 	}else{
 			path = argv[1];
 	}
