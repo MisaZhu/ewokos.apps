@@ -1,5 +1,5 @@
 ifeq ($(ewokos),)
-ewokos=../ewokos
+export ewokos=../ewokos
 endif
 
 ifeq ($(ARCH),)
