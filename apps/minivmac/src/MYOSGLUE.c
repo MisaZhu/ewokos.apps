@@ -1709,7 +1709,7 @@ static void on_xwin_repaint(xwin_t* win, graph_t* g) {
 	window_width = g->w;
 	window_height = g->h;
 
-	graph_fill(g, 0, 0, g->w, g->h, 0xff000000);
+	graph_fill_rect(g, 0, 0, g->w, g->h, 0xff000000);
 
 	if (screen_buffer != NULL && screen_buffer->buffer != NULL) {
 		ScreenChangedTop = 0;
@@ -1856,7 +1856,7 @@ LOCALFUNC blnr CreateMainWindow(void)
 		return falseblnr;
 	}
 
-	graph_fill(screen_buffer, 0, 0, vMacScreenWidth, vMacScreenHeight, 0xffffffff);
+	graph_fill_rect(screen_buffer, 0, 0, vMacScreenWidth, vMacScreenHeight, 0xffffffff);
 
 	xwin = xwin_open(x_context, -1, 32, 32, NewWindowWidth, NewWindowHeight,
 		"Mini vMac", XWIN_STYLE_NORMAL);

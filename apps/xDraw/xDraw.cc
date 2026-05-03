@@ -34,7 +34,7 @@ protected:
         graph_fill_round(g, colorX, colorY, colorSize, colorSize, 2, color);
 
         // 绘制边框
-        graph_box(g, r.x, r.y, r.w, r.h, theme->basic.fgColor);
+        graph_rect(g, r.x, r.y, r.w, r.h, theme->basic.fgColor);
     }
 
 public:
@@ -74,7 +74,7 @@ protected:
         graph_draw_text_font(g, textX, textY, text.c_str(), theme->getFont(), theme->basic.fontSize, theme->basic.fgColor);
 
         // 绘制边框
-        graph_box(g, r.x, r.y, r.w, r.h, theme->basic.fgColor);
+        graph_rect(g, r.x, r.y, r.w, r.h, theme->basic.fgColor);
     }
 
 public:
@@ -153,7 +153,7 @@ public:
             backupCanvas = NULL;
         }
         canvas = graph_new(NULL, area.w, area.h);
-        graph_fill(canvas, 0, 0, area.w, area.h, 0xffffffff); // 白色背景
+        graph_fill_rect(canvas, 0, 0, area.w, area.h, 0xffffffff); // 白色背景
         update();
     }
 
@@ -167,7 +167,7 @@ protected:
             backupCanvas = NULL;
         }
         canvas = graph_new(NULL, area.w, area.h);
-        graph_fill(canvas, 0, 0, area.w, area.h, 0xffffffff); // 白色背景
+        graph_fill_rect(canvas, 0, 0, area.w, area.h, 0xffffffff); // 白色背景
     }
 
     void onRepaint(graph_t* g, XTheme* theme, const grect_t& r) {
@@ -230,7 +230,7 @@ protected:
                     graph_wline(canvas, lastX, lastY, x, y, 5, color);
                     break;
                 case TOOL_RECT:
-                    graph_box(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
+                    graph_rect(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
                     break;
                 case TOOL_ROUND_RECT:
                     graph_round(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), 18, penSize, color);
@@ -246,7 +246,7 @@ protected:
                     break;
                 }
                 case TOOL_FILL_RECT:
-                    graph_fill(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
+                    graph_fill_rect(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
                     break;
                 case TOOL_FILL_ROUND_RECT:
                     graph_fill_round(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), 18, color);
@@ -275,7 +275,7 @@ protected:
                     graph_wline(canvas, lastX, lastY, x, y, 5, color);
                     break;
                 case TOOL_RECT:
-                    graph_box(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
+                    graph_rect(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
                     break;
                 case TOOL_ROUND_RECT:
                     graph_round(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), 18, penSize, color);
@@ -291,7 +291,7 @@ protected:
                     break;
                 }
                 case TOOL_FILL_RECT:
-                    graph_fill(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
+                    graph_fill_rect(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
                     break;
                 case TOOL_FILL_ROUND_RECT:
                     graph_fill_round(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), 18, color);

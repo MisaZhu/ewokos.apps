@@ -627,7 +627,7 @@ protected:
 		screen = g;
         screenRect = r;
         if(!loaded) {
-            graph_fill(g, r.x, r.y, r.w, r.h, theme->basic.bgColor);
+            graph_fill_rect(g, r.x, r.y, r.w, r.h, theme->basic.bgColor);
             if(!logo)
                 logo = graph_image_new(X::getResFullName("logo.png").c_str());
             if(logo) {

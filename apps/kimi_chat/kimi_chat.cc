@@ -78,7 +78,7 @@ protected:
 		}
 
 		if (!alpha) {
-			graph_fill(g, r.x, r.y, r.w, r.h, theme->basic.bgColor);
+			graph_fill_rect(g, r.x, r.y, r.w, r.h, theme->basic.bgColor);
 		}
 
 		y = r.y + (r.h - (int)theme->basic.fontSize) / 2;
