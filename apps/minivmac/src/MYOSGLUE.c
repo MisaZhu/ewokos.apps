@@ -1658,18 +1658,9 @@ static void on_xwin_event(xwin_t* win, xevent_t* ev) {
 			int y = pos.y;
 			
 			int button = ev->value.mouse.button;
-
-			//if (button == MOUSE_BUTTON_LEFT) {
-			if (ev->state == MOUSE_STATE_DOWN) {
-				MyMouseButtonSet(trueblnr);
-			} else if (ev->state == MOUSE_STATE_UP) {
-				MyMouseButtonSet(falseblnr);
-			}
-			//}
+			int mac_x = -1, mac_y = -1;
 
 			if (window_width > 0 && window_height > 0) {
-				int mac_x, mac_y;
-
 				if (display_scale > 1.0) {
 					int scaled_x = x - display_offset_x;
 					int scaled_y = y - display_offset_y;
@@ -1688,6 +1679,14 @@ static void on_xwin_event(xwin_t* win, xevent_t* ev) {
 					mac_y >= 0 && mac_y < vMacScreenHeight) {
 					MousePositionNotify(mac_x, mac_y);
 				}
+			}
+
+			if (ev->state == MOUSE_STATE_DOWN) {
+				MyMouseButtonSet(falseblnr);
+				MyMouseButtonSet(trueblnr);
+			} else if (ev->state == MOUSE_STATE_UP) {
+				MyMouseButtonSet(falseblnr);
+			} else if (ev->state == MOUSE_STATE_MOVE) {
 			}
 			break;
 		}
