@@ -7,7 +7,6 @@
 #include <graph/graph_png.h>
 #include <ewoksys/ewokdef.h>
 #include <openlibm.h>
-#include <cmath> // 添加头文件用于数学计算
 
 using namespace Ewok;
 

@@ -9,10 +9,35 @@
 #include <graph/graph.h>
 #include <ewoksys/keydef.h>
 #include <ewoksys/basic_math.h>
-#include <cmath>
-#include <algorithm>
 
 using namespace Ewok;
+
+static inline int intMin(int a, int b) {
+    return (a < b) ? a : b;
+}
+
+static inline int intAbs(int v) {
+    return (v < 0) ? -v : v;
+}
+
+static int intSqrt(int v) {
+    if(v <= 0)
+        return 0;
+
+    int x = v;
+    int y = (x + 1) / 2;
+    while(y < x) {
+        x = y;
+        y = (x + v / x) / 2;
+    }
+    return x;
+}
+
+static inline int circleRadius(int x0, int y0, int x1, int y1) {
+    int dx = x1 - x0;
+    int dy = y1 - y0;
+    return intSqrt(dx * dx + dy * dy);
+}
 
 class ColorButton : public LabelButton {
 private:
@@ -230,26 +255,26 @@ protected:
                     graph_wline(canvas, lastX, lastY, x, y, 5, color);
                     break;
                 case TOOL_RECT:
-                    graph_rect(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
+                    graph_rect(canvas, intMin(lastX, x), intMin(lastY, y), intAbs(x - lastX), intAbs(y - lastY), color);
                     break;
                 case TOOL_ROUND_RECT:
-                    graph_round(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), 18, penSize, color);
+                    graph_round(canvas, intMin(lastX, x), intMin(lastY, y), intAbs(x - lastX), intAbs(y - lastY), 18, penSize, color);
                     break;
                 case TOOL_CIRCLE: {
-                    int radius = sqrt(pow(x - lastX, 2) + pow(y - lastY, 2));
+                    int radius = circleRadius(lastX, lastY, x, y);
                     graph_circle(canvas, lastX, lastY, radius, penSize, color);
                     break;
                 }
                 case TOOL_FILL_CIRCLE: {
-                    int radius = sqrt(pow(x - lastX, 2) + pow(y - lastY, 2));
+                    int radius = circleRadius(lastX, lastY, x, y);
                     graph_fill_circle(canvas, lastX, lastY, radius, color);
                     break;
                 }
                 case TOOL_FILL_RECT:
-                    graph_fill_rect(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
+                    graph_fill_rect(canvas, intMin(lastX, x), intMin(lastY, y), intAbs(x - lastX), intAbs(y - lastY), color);
                     break;
                 case TOOL_FILL_ROUND_RECT:
-                    graph_fill_round(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), 18, color);
+                    graph_fill_round(canvas, intMin(lastX, x), intMin(lastY, y), intAbs(x - lastX), intAbs(y - lastY), 18, color);
                     break;
                     }
                     update();
@@ -275,26 +300,26 @@ protected:
                     graph_wline(canvas, lastX, lastY, x, y, 5, color);
                     break;
                 case TOOL_RECT:
-                    graph_rect(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
+                    graph_rect(canvas, intMin(lastX, x), intMin(lastY, y), intAbs(x - lastX), intAbs(y - lastY), color);
                     break;
                 case TOOL_ROUND_RECT:
-                    graph_round(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), 18, penSize, color);
+                    graph_round(canvas, intMin(lastX, x), intMin(lastY, y), intAbs(x - lastX), intAbs(y - lastY), 18, penSize, color);
                     break;
                 case TOOL_CIRCLE: {
-                    int radius = sqrt(pow(x - lastX, 2) + pow(y - lastY, 2));
+                    int radius = circleRadius(lastX, lastY, x, y);
                     graph_circle(canvas, lastX, lastY, radius, penSize, color);
                     break;
                 }
                 case TOOL_FILL_CIRCLE: {
-                    int radius = sqrt(pow(x - lastX, 2) + pow(y - lastY, 2));
+                    int radius = circleRadius(lastX, lastY, x, y);
                     graph_fill_circle(canvas, lastX, lastY, radius, color);
                     break;
                 }
                 case TOOL_FILL_RECT:
-                    graph_fill_rect(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), color);
+                    graph_fill_rect(canvas, intMin(lastX, x), intMin(lastY, y), intAbs(x - lastX), intAbs(y - lastY), color);
                     break;
                 case TOOL_FILL_ROUND_RECT:
-                    graph_fill_round(canvas, std::min(lastX, x), std::min(lastY, y), std::abs(x - lastX), std::abs(y - lastY), 18, color);
+                    graph_fill_round(canvas, intMin(lastX, x), intMin(lastY, y), intAbs(x - lastX), intAbs(y - lastY), 18, color);
                     break;
                     }
                     update();
@@ -513,4 +538,3 @@ int main(int argc, char** argv) {
     widgetXRun(&x, &win);
     return 0;
 }
-
