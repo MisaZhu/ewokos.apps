@@ -57,6 +57,11 @@ public:
     }
 
 protected:
+    void doTimer(uint32_t fps, uint32_t timerSteps) override {
+        (void)fps;
+        (void)timerSteps;
+    }
+
     void onRepaint(graph_t* g, XTheme* theme, const grect_t& r) {
         for (int y = r.y; y < r.y + r.h; y++) {
             for (int x = r.x; x < r.x + r.w; x++) {

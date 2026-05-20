@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <string.h>
 #include <ewoksys/proc.h>
 #include <ewoksys/kernel_tic.h>
@@ -289,6 +290,174 @@ static int pcmSampleRate = 44100;
 static int16_t audioBuffer[AUDIO_BUFFER_SAMPLES * 2]; // Stereo buffer
 static int audioBufferPos = 0;
 
+#define AUDIO_RING_SAMPLES (AUDIO_BUFFER_SAMPLES * 8)
+static int16_t audioRing[AUDIO_RING_SAMPLES * 2];
+static int audioRingReadPos = 0;
+static int audioRingWritePos = 0;
+static int audioRingUsed = 0;
+static pthread_t audioThread;
+static pthread_mutex_t audioLock;
+static bool audioLockInited = false;
+static bool audioThreadCreated = false;
+static bool audioThreadExit = false;
+static pthread_mutex_t frameLock;
+static bool frameLockInited = false;
+
+#define EMU_FRAME_USEC 16667ULL
+#define EMU_MAX_CATCHUP_FRAMES 3
+#define EMU_RESYNC_LAG_USEC (EMU_FRAME_USEC * 6)
+
+static uint64_t now_usec(void) {
+    uint64_t usec = 0;
+    kernel_tic(NULL, &usec);
+    return usec;
+}
+
+static void frame_sync_init(void) {
+    if (!frameLockInited) {
+        pthread_mutex_init(&frameLock, NULL);
+        frameLockInited = true;
+    }
+}
+
+static void audio_sync_init(void) {
+    if (!audioLockInited) {
+        pthread_mutex_init(&audioLock, NULL);
+        audioLockInited = true;
+    }
+}
+
+static void audio_ring_reset_locked(void) {
+    audioRingReadPos = 0;
+    audioRingWritePos = 0;
+    audioRingUsed = 0;
+}
+
+static void audio_drop_oldest_locked(int frames) {
+    if (frames <= 0 || audioRingUsed == 0) {
+        return;
+    }
+
+    if (frames >= audioRingUsed) {
+        audio_ring_reset_locked();
+        return;
+    }
+
+    audioRingReadPos = (audioRingReadPos + frames) % AUDIO_RING_SAMPLES;
+    audioRingUsed -= frames;
+}
+
+static void audio_enqueue_frames_locked(const int16_t* data, int frames) {
+    if (data == NULL || frames <= 0) {
+        return;
+    }
+
+    if (frames >= AUDIO_RING_SAMPLES) {
+        data += (frames - AUDIO_RING_SAMPLES) * 2;
+        frames = AUDIO_RING_SAMPLES;
+        audio_ring_reset_locked();
+    }
+
+    int freeFrames = AUDIO_RING_SAMPLES - audioRingUsed;
+    if (frames > freeFrames) {
+        audio_drop_oldest_locked(frames - freeFrames);
+    }
+
+    int firstFrames = AUDIO_RING_SAMPLES - audioRingWritePos;
+    if (firstFrames > frames) {
+        firstFrames = frames;
+    }
+
+    memcpy(&audioRing[audioRingWritePos * 2], data, firstFrames * 2 * (int)sizeof(int16_t));
+
+    int remainingFrames = frames - firstFrames;
+    if (remainingFrames > 0) {
+        memcpy(audioRing, data + firstFrames * 2, remainingFrames * 2 * (int)sizeof(int16_t));
+    }
+
+    audioRingWritePos = (audioRingWritePos + frames) % AUDIO_RING_SAMPLES;
+    audioRingUsed += frames;
+}
+
+static int audio_dequeue_frames_locked(int16_t* out, int maxFrames) {
+    if (out == NULL || maxFrames <= 0 || audioRingUsed <= 0) {
+        return 0;
+    }
+
+    int frames = audioRingUsed < maxFrames ? audioRingUsed : maxFrames;
+    int firstFrames = AUDIO_RING_SAMPLES - audioRingReadPos;
+    if (firstFrames > frames) {
+        firstFrames = frames;
+    }
+
+    memcpy(out, &audioRing[audioRingReadPos * 2], firstFrames * 2 * (int)sizeof(int16_t));
+
+    int remainingFrames = frames - firstFrames;
+    if (remainingFrames > 0) {
+        memcpy(out + firstFrames * 2, audioRing, remainingFrames * 2 * (int)sizeof(int16_t));
+    }
+
+    audioRingReadPos = (audioRingReadPos + frames) % AUDIO_RING_SAMPLES;
+    audioRingUsed -= frames;
+    return frames;
+}
+
+static void* audio_thread_entry(void* arg) {
+    (void)arg;
+    int16_t localBuf[AUDIO_BUFFER_SAMPLES * 2];
+
+    for (;;) {
+        int frames = 0;
+        bool shouldExit = false;
+
+        pthread_mutex_lock(&audioLock);
+        frames = audio_dequeue_frames_locked(localBuf, AUDIO_BUFFER_SAMPLES);
+        shouldExit = audioThreadExit && (audioRingUsed == 0);
+        pthread_mutex_unlock(&audioLock);
+
+        if (frames > 0) {
+            if (pcmDev != NULL) {
+                pcm_write(pcmDev, localBuf, frames * 4);
+            }
+            continue;
+        }
+
+        if (shouldExit) {
+            break;
+        }
+
+        proc_usleep(2000);
+    }
+
+    return NULL;
+}
+
+static void audio_thread_stop(void) {
+    if (!audioThreadCreated) {
+        return;
+    }
+
+    pthread_mutex_lock(&audioLock);
+    audioThreadExit = true;
+    pthread_mutex_unlock(&audioLock);
+
+    pthread_join(audioThread, NULL);
+    audioThreadCreated = false;
+}
+
+static void audio_thread_start(void) {
+    audio_sync_init();
+
+    pthread_mutex_lock(&audioLock);
+    audioThreadExit = false;
+    audio_ring_reset_locked();
+    pthread_mutex_unlock(&audioLock);
+
+    if (pthread_create(&audioThread, NULL, audio_thread_entry, NULL) == 0) {
+        audioThreadCreated = true;
+    }
+}
+
 using namespace Ewok;
    /* NES part */
 
@@ -317,8 +486,6 @@ WORD NesPalette[ 64 ] =
 	0x30,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x3a,0x3b,0x3c,0x3d,0x3e,0x3f
 };
 
-graph_t *screen;
-grect_t screenRect;
 graph_t *paint;
 
 /* Menu screen */
@@ -394,14 +561,15 @@ void graph_scale_fix_center(graph_t *src, graph_t *dst, const grect_t& r){
 }
 
 void InfoNES_LoadFrame(){
+    frame_sync_init();
+    pthread_mutex_lock(&frameLock);
 	WORD* s = WorkFrame;
-	uint32_t* d=(uint32_t *)paint->buffer;  
+	uint32_t* d=(uint32_t *)paint->buffer;
 	for(int i= 0; i < NES_DISP_WIDTH*NES_DISP_HEIGHT; i++ ){
 		int idx = *s++ % 64;
 		d[i] = RGBPalette[idx];
-	};
-
-	graph_scale_fix_center(paint, screen, screenRect);
+	}
+    pthread_mutex_unlock(&frameLock);
 }
 
 /* Get a joypad state */
@@ -437,7 +605,12 @@ void InfoNES_SoundInit( void ){
 
 /* Sound Open */
 int InfoNES_SoundOpen( int samples_per_sync, int sample_rate ){
+    (void)samples_per_sync;
+
+    audio_sync_init();
+
     // Close existing PCM device if any
+    audio_thread_stop();
     if (pcmDev != NULL) {
         pcm_close(pcmDev);
         pcmDev = NULL;
@@ -447,6 +620,9 @@ int InfoNES_SoundOpen( int samples_per_sync, int sample_rate ){
 
     // Reset audio buffer
     audioBufferPos = 0;
+    pthread_mutex_lock(&audioLock);
+    audio_ring_reset_locked();
+    pthread_mutex_unlock(&audioLock);
 
     // Open PCM device for NES audio output
     // NES APU output is mono, we convert to stereo
@@ -465,21 +641,36 @@ int InfoNES_SoundOpen( int samples_per_sync, int sample_rate ){
         printf("Failed to open PCM device\n");
         return -1;
     }
+
+    audio_thread_start();
     return 0;
 }
 
 /* Sound Close */
 void InfoNES_SoundClose( void ){
-    // Flush remaining audio buffer
-    if (pcmDev != NULL && audioBufferPos > 0) {
-        pcm_write(pcmDev, audioBuffer, audioBufferPos * 4);
+    audio_sync_init();
+
+    if (audioBufferPos > 0) {
+        if (audioThreadCreated) {
+            pthread_mutex_lock(&audioLock);
+            audio_enqueue_frames_locked(audioBuffer, audioBufferPos);
+            pthread_mutex_unlock(&audioLock);
+        } else if (pcmDev != NULL) {
+            pcm_write(pcmDev, audioBuffer, audioBufferPos * 4);
+        }
         audioBufferPos = 0;
     }
+
+    audio_thread_stop();
 
     if (pcmDev != NULL) {
         pcm_close(pcmDev);
         pcmDev = NULL;
     }
+
+    pthread_mutex_lock(&audioLock);
+    audio_ring_reset_locked();
+    pthread_mutex_unlock(&audioLock);
 }
 
 /* Sound Output 5 Waves - 2 Pulse, 1 Triangle, 1 Noise, 1 DPCM */
@@ -514,7 +705,13 @@ void InfoNES_SoundOutput(int samples, BYTE *wave1, BYTE *wave2, BYTE *wave3, BYT
 
         // When buffer is full, write to PCM device
         if (audioBufferPos >= AUDIO_BUFFER_SAMPLES) {
-            pcm_write(pcmDev, audioBuffer, AUDIO_BUFFER_SAMPLES * 4); // 4 bytes per stereo sample
+            if (audioThreadCreated) {
+                pthread_mutex_lock(&audioLock);
+                audio_enqueue_frames_locked(audioBuffer, AUDIO_BUFFER_SAMPLES);
+                pthread_mutex_unlock(&audioLock);
+            } else {
+                pcm_write(pcmDev, audioBuffer, AUDIO_BUFFER_SAMPLES * 4);
+            }
             audioBufferPos = 0;
         }
     }
@@ -523,15 +720,74 @@ void InfoNES_SoundOutput(int samples, BYTE *wave1, BYTE *wave2, BYTE *wave3, BYT
 class NesEmu : public Widget {
     bool loaded;
     graph_t* logo; 
+    pthread_t emuThread;
+    bool emuThreadCreated;
+    bool emuThreadExit;
+
+    static void* emuThreadEntry(void* arg) {
+        ((NesEmu*)arg)->emuLoop();
+        return NULL;
+    }
+
+    void emuLoop() {
+        uint64_t nextFrameUsec = now_usec();
+
+        while (!emuThreadExit) {
+            uint64_t now = now_usec();
+            if (now + 1000 < nextFrameUsec) {
+                proc_usleep((uint32_t)(nextFrameUsec - now));
+                continue;
+            }
+
+            int catchupFrames = 0;
+            while (!emuThreadExit && now >= nextFrameUsec && catchupFrames < EMU_MAX_CATCHUP_FRAMES) {
+                InfoNES_Cycle();
+                nextFrameUsec += EMU_FRAME_USEC;
+                catchupFrames++;
+                now = now_usec();
+            }
+
+            if (now > (nextFrameUsec + EMU_RESYNC_LAG_USEC)) {
+                nextFrameUsec = now + EMU_FRAME_USEC;
+            } else if (catchupFrames == 0) {
+                proc_yield();
+            }
+        }
+    }
+
+    void stopEmuThread() {
+        if (!emuThreadCreated) {
+            return;
+        }
+        emuThreadExit = true;
+        pthread_join(emuThread, NULL);
+        emuThreadCreated = false;
+    }
+
+    void startEmuThread() {
+        emuThreadExit = false;
+        if (pthread_create(&emuThread, NULL, emuThreadEntry, this) == 0) {
+            emuThreadCreated = true;
+        }
+    }
+
 public:
 	inline NesEmu() {
         logo = NULL;
         loaded = false;
+        emuThreadCreated = false;
+        emuThreadExit = false;
 		padState = 0;
+        frame_sync_init();
 		paint = graph_new(NULL, 256, 240);
 	}
 	
 	inline ~NesEmu() {
+        stopEmuThread();
+        if (loaded) {
+            InfoNES_Fin();
+            loaded = false;
+        }
         if(paint)
     		graph_free(paint);
 
@@ -540,6 +796,12 @@ public:
 	}
 
     bool loadGame(const char* path){
+        stopEmuThread();
+        if (loaded) {
+            InfoNES_Fin();
+            loaded = false;
+        }
+
 		int i = InfoNES_Load(path);
         if(i != 0) {
             loaded = false;
@@ -547,6 +809,7 @@ public:
         }
 		InfoNES_Init();
         loaded = true;
+        startEmuThread();
 		return true;
     } 
 
@@ -623,9 +886,6 @@ protected:
 	}
 
     void onRepaint(graph_t* g, XTheme* theme, const grect_t& r) {
-		static int framecnt= 0;
-		screen = g;
-        screenRect = r;
         if(!loaded) {
             graph_fill_rect(g, r.x, r.y, r.w, r.h, theme->basic.bgColor);
             if(!logo)
@@ -637,8 +897,15 @@ protected:
             }
             return;
         }
-		InfoNES_Cycle();
-		//printf("wait\n");
+
+        if (!emuThreadCreated) {
+            InfoNES_Cycle();
+        }
+
+        frame_sync_init();
+        pthread_mutex_lock(&frameLock);
+        graph_scale_fix_center(paint, g, r);
+        pthread_mutex_unlock(&frameLock);
 	}
 
     void onTimer(uint32_t timerFPS, uint32_t timerStep) {
@@ -719,6 +986,6 @@ int main(int argc, char *argv[]) {
     win.open(&x, -1, -1, -1, 256*scale, 240*scale+24, "NesEmu", XWIN_STYLE_NORMAL);
     win.setTimer(90);
     widgetXRun(&x, &win);
-	InfoNES_Fin();
+    delete emu;
 	return 0;
 }
