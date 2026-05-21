@@ -347,9 +347,13 @@ static void audio_drop_oldest_locked(int frames) {
     audioRingUsed -= frames;
 }
 
-static void audio_enqueue_frames_locked(const int16_t* data, int frames) {
-    if (data == NULL || frames <= 0) {
+static void audio_enqueue_frames_locked(const int16_t* data, int frames, int availableFrames) {
+    if (data == NULL || frames <= 0 || availableFrames <= 0) {
         return;
+    }
+
+    if (frames > availableFrames) {
+        frames = availableFrames;
     }
 
     if (frames >= AUDIO_RING_SAMPLES) {
@@ -363,16 +367,12 @@ static void audio_enqueue_frames_locked(const int16_t* data, int frames) {
         audio_drop_oldest_locked(frames - freeFrames);
     }
 
-    int firstFrames = AUDIO_RING_SAMPLES - audioRingWritePos;
-    if (firstFrames > frames) {
-        firstFrames = frames;
-    }
-
-    memcpy(&audioRing[audioRingWritePos * 2], data, firstFrames * 2 * (int)sizeof(int16_t));
-
-    int remainingFrames = frames - firstFrames;
-    if (remainingFrames > 0) {
-        memcpy(audioRing, data + firstFrames * 2, remainingFrames * 2 * (int)sizeof(int16_t));
+    for (int i = 0; i < frames; ++i) {
+        int ringPos = (audioRingWritePos + i) % AUDIO_RING_SAMPLES;
+        int srcPos = i * 2;
+        int dstPos = ringPos * 2;
+        audioRing[dstPos] = data[srcPos];
+        audioRing[dstPos + 1] = data[srcPos + 1];
     }
 
     audioRingWritePos = (audioRingWritePos + frames) % AUDIO_RING_SAMPLES;
@@ -653,7 +653,7 @@ void InfoNES_SoundClose( void ){
     if (audioBufferPos > 0) {
         if (audioThreadCreated) {
             pthread_mutex_lock(&audioLock);
-            audio_enqueue_frames_locked(audioBuffer, audioBufferPos);
+            audio_enqueue_frames_locked(audioBuffer, audioBufferPos, audioBufferPos);
             pthread_mutex_unlock(&audioLock);
         } else if (pcmDev != NULL) {
             pcm_write(pcmDev, audioBuffer, audioBufferPos * 4);
@@ -707,7 +707,7 @@ void InfoNES_SoundOutput(int samples, BYTE *wave1, BYTE *wave2, BYTE *wave3, BYT
         if (audioBufferPos >= AUDIO_BUFFER_SAMPLES) {
             if (audioThreadCreated) {
                 pthread_mutex_lock(&audioLock);
-                audio_enqueue_frames_locked(audioBuffer, AUDIO_BUFFER_SAMPLES);
+                audio_enqueue_frames_locked(audioBuffer, AUDIO_BUFFER_SAMPLES, AUDIO_BUFFER_SAMPLES);
                 pthread_mutex_unlock(&audioLock);
             } else {
                 pcm_write(pcmDev, audioBuffer, AUDIO_BUFFER_SAMPLES * 4);
@@ -986,6 +986,5 @@ int main(int argc, char *argv[]) {
     win.open(&x, -1, -1, -1, 256*scale, 240*scale+24, "NesEmu", XWIN_STYLE_NORMAL);
     win.setTimer(90);
     widgetXRun(&x, &win);
-    delete emu;
 	return 0;
 }
