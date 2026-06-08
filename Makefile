@@ -1,5 +1,5 @@
 ifeq ($(ewokos),)
-export ewokos=../ewokos
+export ewokos= ~/work/ewokos
 endif
 
 ifeq ($(ARCH),)
@@ -11,11 +11,9 @@ export HW=virt
 endif
 
 all: 
-	mkdir -p build
 	cd libs; make
 	cd apps; make
 
 clean:	
 	cd libs; make clean
 	cd apps; make clean
-	rm -fr build

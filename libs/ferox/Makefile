@@ -1,6 +1,6 @@
-SW_ROOT_DIR=../..
-SYS_DIR=$(EWOKOS_ROOT_DIR)/system
+SW_ROOT_DIR = ../..
 include $(SW_ROOT_DIR)/make.inc
+SYS_DIR = $(EWOKOS_ROOT_DIR)/system
 
 CFLAGS += -Iinclude -Isrc -Isrc/external
 

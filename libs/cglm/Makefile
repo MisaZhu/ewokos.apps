@@ -1,11 +1,11 @@
-SW_ROOT_DIR=../..
-SYS_DIR=$(EWOKOS_ROOT_DIR)/system
+SW_ROOT_DIR = ../..
 include $(SW_ROOT_DIR)/make.inc
+SYS_DIR = $(EWOKOS_ROOT_DIR)/system
 
 BUILD_DIR = $(SYS_DIR)/build/$(HW)
 TARGET_DIR = $(BUILD_DIR)/rootfs
 
-LDFLAGS = -L$(BUILD_DIR)/lib
+LDFLAGS = -L $(BUILD_DIR)/lib
 
 CFLAGS += -Iinclude -I $(BUILD_DIR)/include
 

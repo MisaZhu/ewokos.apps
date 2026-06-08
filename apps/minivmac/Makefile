@@ -4,7 +4,7 @@ include $(SW_ROOT_DIR)/make.inc
 BUILD_DIR = $(SYS_DIR)/build/$(HW)
 TARGET_DIR = $(BUILD_DIR)/rootfs
 
-LDFLAGS += -L$(BUILD_DIR)/lib \
+LDFLAGS += -L $(BUILD_DIR)/lib \
 	-lSDL2_image -lSDL2_mixer -lSDL2_gfx -lSDL2_ttf -lSDL2 -lfreetype -lpng -lvorbis -logg -lz -lopenlibm
 
 CFLAGS += -I $(BUILD_DIR)/include
