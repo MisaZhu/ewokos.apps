@@ -302,6 +302,7 @@ static bool audioThreadCreated = false;
 static bool audioThreadExit = false;
 static pthread_mutex_t frameLock;
 static bool frameLockInited = false;
+static bool framePending = false;
 
 #define EMU_FRAME_USEC 16667ULL
 #define EMU_MAX_CATCHUP_FRAMES 3
@@ -569,6 +570,7 @@ void InfoNES_LoadFrame(){
 		int idx = *s++ % 64;
 		d[i] = RGBPalette[idx];
 	}
+    framePending = true;
     pthread_mutex_unlock(&frameLock);
 }
 
@@ -909,7 +911,25 @@ protected:
 	}
 
     void onTimer(uint32_t timerFPS, uint32_t timerStep) {
-        update();
+        (void)timerFPS;
+        (void)timerStep;
+
+        if (!loaded) {
+            return;
+        }
+
+        bool needUpdate = false;
+        frame_sync_init();
+        pthread_mutex_lock(&frameLock);
+        if (framePending) {
+            framePending = false;
+            needUpdate = true;
+        }
+        pthread_mutex_unlock(&frameLock);
+
+        if (needUpdate) {
+            update();
+        }
     }
 };
 
@@ -984,7 +1004,7 @@ int main(int argc, char *argv[]) {
 
 	scale = 1.0;
     win.open(&x, -1, -1, -1, 256*scale, 240*scale+24, "NesEmu", XWIN_STYLE_NORMAL);
-    win.setTimer(90);
+    win.setTimer(60);
     widgetXRun(&x, &win);
 	return 0;
 }
