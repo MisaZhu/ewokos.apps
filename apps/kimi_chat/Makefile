@@ -2,7 +2,7 @@ SW_ROOT_DIR=../..
 include $(SW_ROOT_DIR)/make.inc
 
 TASK = kimi_chat
-TASK_OBJS = kimi_chat.o kimi_client.o
+TASK_OBJS = $(ARCH)/kimi_chat.o $(ARCH)/kimi_client.o
 BUILD_DIR = $(SYS_DIR)/build/$(HW)/rootfs/apps/$(TASK)
 LIBTINYHTTPSC = $(SDK_DIR)/lib/libtinyhttpsc.a
 

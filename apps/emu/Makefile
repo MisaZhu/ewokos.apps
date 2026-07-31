@@ -1,11 +1,11 @@
 SW_ROOT_DIR=../..
 include $(SW_ROOT_DIR)/make.inc
 
-TASK_OBJS = main.o \
-		src/InfoNES.o \
-		src/InfoNES_Mapper.o \
-		src/InfoNES_pAPU.o  \
-		src/K6502.o
+TASK_OBJS = $(ARCH)/main.o \
+		$(ARCH)/src/InfoNES.o \
+		$(ARCH)/src/InfoNES_Mapper.o \
+		$(ARCH)/src/InfoNES_pAPU.o  \
+		$(ARCH)/src/K6502.o
 
 TASK = emu
 BUILD_DIR = $(EWOKOS_ROOT_DIR)/system/build/$(HW)/rootfs/apps/$(TASK)

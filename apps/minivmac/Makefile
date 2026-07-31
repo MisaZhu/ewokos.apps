@@ -11,22 +11,22 @@ CFLAGS += -I $(BUILD_DIR)/include
 CXXFLAGS += -I $(BUILD_DIR)/include
 
 TASK_OBJS = \
-		src/GLOBGLUE.o \
-		src/PROGMAIN.o \
-		src/MYOSGLUE.o \
-		src/MINEM68K.o \
-		src/M68KITAB.o \
-		src/VIAEMDEV.o \
-		src/IWMEMDEV.o \
-		src/SCCEMDEV.o \
-		src/RTCEMDEV.o \
-		src/ROMEMDEV.o \
-		src/SCSIEMDV.o \
-		src/SONYEMDV.o \
-		src/SCRNEMDV.o \
-		src/KBRDEMDV.o \
-		src/MOUSEMDV.o \
-		src/SNDEMDEV.o
+		$(ARCH)/src/GLOBGLUE.o \
+		$(ARCH)/src/PROGMAIN.o \
+		$(ARCH)/src/MYOSGLUE.o \
+		$(ARCH)/src/MINEM68K.o \
+		$(ARCH)/src/M68KITAB.o \
+		$(ARCH)/src/VIAEMDEV.o \
+		$(ARCH)/src/IWMEMDEV.o \
+		$(ARCH)/src/SCCEMDEV.o \
+		$(ARCH)/src/RTCEMDEV.o \
+		$(ARCH)/src/ROMEMDEV.o \
+		$(ARCH)/src/SCSIEMDV.o \
+		$(ARCH)/src/SONYEMDV.o \
+		$(ARCH)/src/SCRNEMDV.o \
+		$(ARCH)/src/KBRDEMDV.o \
+		$(ARCH)/src/MOUSEMDV.o \
+		$(ARCH)/src/SNDEMDEV.o
 
 TASK = minivmac
 TASK_DIR = $(SYS_DIR)/build/$(HW)/rootfs/apps/$(TASK)
@@ -51,7 +51,8 @@ $(TASK): $(TASK_OBJS) \
 	$(LD) -Ttext=100 $(TASK_OBJS) -o $(TASK_DIR)/$(TASK) $(LDFLAGS) $(EWOK_LIB_X) $(EWOK_LIB_GRAPH) $(EWOK_LIBC) -lcxx
 	cp -r res $(TASK_DIR)
 
-%.o: src/%.c
+$(ARCH)/%.o: src/%.c
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:

@@ -4,13 +4,13 @@ SYS_DIR = $(EWOKOS_ROOT_DIR)/system
 
 CFLAGS += -Iinclude -Isrc -Isrc/external
 
-LIB_FEROX_OBJS = src/broadphase.o \
-	src/collision.o \
-	src/dynamics.o \
-	src/geometry.o \
-	src/timer.o \
-	src/utils.o \
-	src/world.o
+LIB_FEROX_OBJS = $(ARCH)/src/broadphase.o \
+	$(ARCH)/src/collision.o \
+	$(ARCH)/src/dynamics.o \
+	$(ARCH)/src/geometry.o \
+	$(ARCH)/src/timer.o \
+	$(ARCH)/src/utils.o \
+	$(ARCH)/src/world.o
 
 FEROX = libferox.a
 BUILD_DIR = $(SYS_DIR)/build/$(HW)

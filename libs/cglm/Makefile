@@ -9,7 +9,7 @@ LDFLAGS = -L $(BUILD_DIR)/lib
 
 CFLAGS += -Iinclude -I $(BUILD_DIR)/include
 
-TASK_OBJS = src/cglmdemo.o
+TASK_OBJS = $(ARCH)/src/cglmdemo.o
 TASK_DIR = $(TARGET_DIR)/bin
 
 TASK = cglmdemo

@@ -6,7 +6,7 @@ EXTRA_LIBS_DIR = $(SW_ROOT_DIR)/build/$(HW)
 CXXFLAGS += -I $(EXTRA_LIBS_DIR)/include 
 LDFLAGS += -L $(EXTRA_LIBS_DIR)/lib
 
-TASK_OBJS = main.o
+TASK_OBJS = $(ARCH)/main.o
 
 TASK = saver
 BUILD_DIR = $(EWOKOS_ROOT_DIR)/system/build/$(HW)/rootfs/apps/$(TASK)

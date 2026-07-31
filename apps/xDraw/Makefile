@@ -2,7 +2,7 @@ SW_ROOT_DIR=../..
 include $(SW_ROOT_DIR)/make.inc
 SYS_ROOT_DIR = $(EWOKOS_ROOT_DIR)/system
 
-TASK_OBJS = xDraw.o
+TASK_OBJS = $(ARCH)/xDraw.o
 
 EXTRA_LIBS_DIR = $(SW_ROOT_DIR)/build/$(HW)
 
