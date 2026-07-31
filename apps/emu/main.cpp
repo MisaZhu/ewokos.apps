@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <pthread.h>
 #include <string.h>
 #include <ewoksys/proc.h>
@@ -45,7 +46,6 @@
 // PCM Audio Driver
 #define CTRL_PCM_DEV_HW         (0xF0)
 #define CTRL_PCM_DEV_PRPARE     (0xF2)
-#define CTRL_PCM_BUF_AVAIL      (0xF3)
 
 struct pcm_config {
     int bit_depth;
@@ -175,24 +175,15 @@ static int pcm_prepare(struct pcm_t *pcm) {
     return ret;
 }
 
-static int pcm_buf_avail(struct pcm_t *pcm)
-{
-    proto_t in, out;
-    PF->init(&in);
-    PF->init(&out);
-    int ret = 0;
-    ret = dev_cntl(pcm->name, CTRL_PCM_BUF_AVAIL, &in, &out);
-    if(ret == 0) {
-        ret = proto_read_int(&out);
-    }
-    PF->clear(&in);
-    PF->clear(&out);
-    return ret;
-}
-
 static int pcm_try_write(struct pcm_t *pcm, const void* data, unsigned int count) {
     if (count == 0) return 0;
 
+    /*
+     * Returns bytes actually written (>= 0) or a negative errno. The
+     * driver uses partial-write semantics: an XRUN mid-write returns
+     * the bytes consumed so far, so the caller must advance by the
+     * returned count instead of treating a short write as an error.
+     */
     if (pcm->running == 0) {
         int err = pcm_prepare(pcm);
         if (err != 0) {
@@ -200,76 +191,54 @@ static int pcm_try_write(struct pcm_t *pcm, const void* data, unsigned int count
         }
 
         int written = write(pcm->fd, data, count);
-        if (written != (int)count) {
-            return -1;
+        if (written > 0) {
+            pcm->running = 1;
         }
-        pcm->running = 1;
-        return 0;
+        return written;
     }
 
-    int ret = write(pcm->fd, data, count);
-    return (ret == (int)count ? 0 : -1);
-}
-
-static int wait_avail(struct pcm_t *pcm, int *avail, int time_out_ms)
-{
-    enum {
-        SLEEP_TIME_MS = 5,
-    };
-    *avail = 0;
-    int ret = 0;
-    int period_bytes = pcm->config.period_size * 4; // 16-bit stereo = 4 bytes per frame
-    int max_try_count = time_out_ms / SLEEP_TIME_MS;
-    int try_count = 0;
-
-    for(;;) {
-        ret = pcm_buf_avail(pcm);
-        if (ret < 0) {
-            break;
-        }
-
-        if (ret >= period_bytes) {
-            *avail = ret;
-            break;
-        }
-
-        if(try_count++ >= max_try_count) {
-            break;
-        }
-
-        proc_usleep(SLEEP_TIME_MS * 1000);
-    }
-
-    return ret;
+    return write(pcm->fd, data, count);
 }
 
 static int pcm_write(struct pcm_t *pcm, const void* data, unsigned int count) {
     if (count == 0) return 0;
 
     int period_bytes = pcm->config.period_size * 4; // 16-bit stereo = 4 bytes per frame
-    int avail = 0;
     int bytes = (int)count;
     int written = 0;
     int offset = 0;
-    int copy_bytes = 0;
-    int ret = 0;
+    int xrun_retry = 0;
 
-    copy_bytes = bytes < period_bytes ? bytes : period_bytes;
+    /*
+     * No avail polling here: when the driver ring is full, write()
+     * blocks inside vfsd (VFS_EVT_WR) and really sleeps until the
+     * playback loop drains a period, so this loop only advances on
+     * real progress or runs the XRUN recovery path.
+     */
     while (bytes > 0) {
-        ret = wait_avail(pcm, &avail, 2000); // Wait up to 2 seconds
-        if (ret < 0 || (avail == 0 && bytes > 0)) {
+        int copy_bytes = bytes < period_bytes ? bytes : period_bytes;
+        int ret = pcm_try_write(pcm, (const char*)data + offset, copy_bytes);
+        if (ret == -EPIPE) {
+            /* XRUN: re-prepare then restart from the 1st-write path */
+            if (xrun_retry++ >= 5) {
+                break;
+            }
+            pcm->prepared = 0;
+            pcm->running = 0;
+            if (pcm_prepare(pcm) != 0) {
+                proc_usleep(10000);
+            }
+            continue;
+        }
+        if (ret <= 0) {
+            if (ret < 0) break;
+            /* ret == 0 without error: no progress, avoid spinning */
             break;
         }
-
-        copy_bytes = bytes < avail ? bytes : avail;
-
-        ret = pcm_try_write(pcm, (const char*)data + offset, copy_bytes);
-        if (ret == 0) {
-            offset += copy_bytes;
-            written += copy_bytes;
-            bytes -= copy_bytes;
-            copy_bytes = bytes < period_bytes ? bytes : period_bytes;
-        }
+        xrun_retry = 0;
+        offset += ret;
+        written += ret;
+        bytes -= ret;
     }
 
     return (written == (int)count ? 0 : -1);
