@@ -1,7 +1,3 @@
-ifeq ($(ewokos),)
-export ewokos= ~/work/ewokos
-endif
-
 ifeq ($(ARCH),)
 export ARCH=aarch64
 endif

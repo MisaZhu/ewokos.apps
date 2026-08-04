@@ -1,3 +1,7 @@
+ifeq ($(ewokos),)
+export ewokos= ~/work/ewokos
+endif
+
 EWOKOS_ROOT_DIR = $(ewokos)
 SYS_DIR = $(EWOKOS_ROOT_DIR)/system
 
