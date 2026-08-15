@@ -95,14 +95,14 @@ GLOBALPROC customreset(void)
 	Sony_Reset();
 	Extn_Reset();
 #if CurEmMd <= kEmMd_Plus
-	WantMacReset = trueblnr;
+	ForceMacOff = trueblnr;
 	/*
 		kludge, code in Finder appears
 		to do RESET and not expect
-		to come back. Maybe asserting
-		the RESET somehow causes
-		other hardware compenents to
-		later reset the 68000.
+		to come back. On EwokOS, treat
+		that path as a request to leave
+		the emulator instead of rebooting
+		back into the guest.
 	*/
 #endif
 }
