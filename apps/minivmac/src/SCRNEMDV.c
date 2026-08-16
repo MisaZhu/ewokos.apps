@@ -1,27 +1,27 @@
 /*
-	SCRNEMDV.c
+    SCRNEMDV.c
 
-	Copyright (C) 2006 Philip Cummins, Richard F. Bannister,
-		Paul C. Pratt
+    Copyright (C) 2006 Philip Cummins, Richard F. Bannister,
+        Paul C. Pratt
 
-	You can redistribute this file and/or modify it under the terms
-	of version 2 of the GNU General Public License as published by
-	the Free Software Foundation.  You should have received a copy
-	of the license along with this file; see the file COPYING.
+    You can redistribute this file and/or modify it under the terms
+    of version 2 of the GNU General Public License as published by
+    the Free Software Foundation.  You should have received a copy
+    of the license along with this file; see the file COPYING.
 
-	This file is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-	license for more details.
+    This file is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    license for more details.
 */
 
 /*
-	SCReeN EMulated DeVice
+    SCReeN EMulated DeVice
 
-	Emulation of the screen in the Mac Plus.
+    Emulation of the screen in the Mac Plus.
 
-	This code descended from "Screen-MacOS.c" in Richard F. Bannister's
-	Macintosh port of vMac, by Philip Cummins.
+    This code descended from "Screen-MacOS.c" in Richard F. Bannister's
+    Macintosh port of vMac, by Philip Cummins.
 */
 
 #ifndef AllFiles
@@ -43,17 +43,17 @@
 
 GLOBALPROC Screen_EndTickNotify(void)
 {
-	ui3p screencurrentbuff;
+    ui3p screencurrentbuff;
 
 #if IncludeVidMem
-	screencurrentbuff = VidMem;
+    screencurrentbuff = VidMem;
 #else
-	if (SCRNvPage2 == 1) {
-		screencurrentbuff = get_ram_address(kMain_Buffer);
-	} else {
-		screencurrentbuff = get_ram_address(kAlternate_Buffer);
-	}
+    if (SCRNvPage2 == 1) {
+        screencurrentbuff = get_ram_address(kMain_Buffer);
+    } else {
+        screencurrentbuff = get_ram_address(kAlternate_Buffer);
+    }
 #endif
 
-	Screen_OutputFrame(screencurrentbuff);
+    Screen_OutputFrame(screencurrentbuff);
 }

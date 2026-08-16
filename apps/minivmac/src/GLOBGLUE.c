@@ -1,27 +1,27 @@
 /*
-	GLOBGLUE.c
+    GLOBGLUE.c
 
-	Copyright (C) 2003 Bernd Schmidt, Philip Cummins, Paul C. Pratt
+    Copyright (C) 2003 Bernd Schmidt, Philip Cummins, Paul C. Pratt
 
-	You can redistribute this file and/or modify it under the terms
-	of version 2 of the GNU General Public License as published by
-	the Free Software Foundation.  You should have received a copy
-	of the license along with this file; see the file COPYING.
+    You can redistribute this file and/or modify it under the terms
+    of version 2 of the GNU General Public License as published by
+    the Free Software Foundation.  You should have received a copy
+    of the license along with this file; see the file COPYING.
 
-	This file is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-	license for more details.
+    This file is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    license for more details.
 */
 
 /*
-	GLOBal GLUE (or GLOB of GLUE)
+    GLOBal GLUE (or GLOB of GLUE)
 
-	Holds the program together.
+    Holds the program together.
 
-	Some code here adapted from "custom.c" in vMac by Philip Cummins,
-	in turn descended from code in the Un*x Amiga Emulator by
-	Bernd Schmidt.
+    Some code here adapted from "custom.c" in vMac by Philip Cummins,
+    in turn descended from code in the Un*x Amiga Emulator by
+    Bernd Schmidt.
 */
 
 #ifndef AllFiles
@@ -54,7 +54,7 @@ IMPORTPROC Sony_SetQuitOnEject(void);
 
 IMPORTPROC m68k_IPLchangeNtfy(void);
 IMPORTPROC MINEM68K_Init(
-	ui3b *fIPL);
+    ui3b *fIPL);
 
 IMPORTFUNC ui5b GetCyclesRemaining(void);
 IMPORTPROC SetCyclesRemaining(ui5b n);
@@ -85,25 +85,25 @@ GLOBALVAR ui5r my_disk_icon_addr;
 
 GLOBALPROC customreset(void)
 {
-	IWM_Reset();
-	SCC_Reset();
-	SCSI_Reset();
-	VIA1_Reset();
+    IWM_Reset();
+    SCC_Reset();
+    SCSI_Reset();
+    VIA1_Reset();
 #if EmVIA2
-	VIA2_Reset();
+    VIA2_Reset();
 #endif
-	Sony_Reset();
-	Extn_Reset();
+    Sony_Reset();
+    Extn_Reset();
 #if CurEmMd <= kEmMd_Plus
-	ForceMacOff = trueblnr;
-	/*
-		kludge, code in Finder appears
-		to do RESET and not expect
-		to come back. On EwokOS, treat
-		that path as a request to leave
-		the emulator instead of rebooting
-		back into the guest.
-	*/
+    ForceMacOff = trueblnr;
+    /*
+        kludge, code in Finder appears
+        to do RESET and not expect
+        to come back. On EwokOS, treat
+        that path as a request to leave
+        the emulator instead of rebooting
+        back into the guest.
+    */
 #endif
 }
 
@@ -127,69 +127,69 @@ IMPORTPROC m68k_WantDisasmContext(void);
 #if WantDisasm
 GLOBALPROC dbglog_StartLine(void)
 {
-	m68k_WantDisasmContext();
-	dbglog_writeCStr(" ");
+    m68k_WantDisasmContext();
+    dbglog_writeCStr(" ");
 }
 #endif
 
 #if dbglog_HAVE
 GLOBALPROC dbglog_WriteMemArrow(blnr WriteMem)
 {
-	if (WriteMem) {
-		dbglog_writeCStr(" <- ");
-	} else {
-		dbglog_writeCStr(" -> ");
-	}
+    if (WriteMem) {
+        dbglog_writeCStr(" <- ");
+    } else {
+        dbglog_writeCStr(" -> ");
+    }
 }
 #endif
 
 #if dbglog_HAVE
 GLOBALPROC dbglog_AddrAccess(char *s, ui5r Data,
-	blnr WriteMem, ui5r addr)
+    blnr WriteMem, ui5r addr)
 {
-	dbglog_StartLine();
-	dbglog_writeCStr(s);
-	dbglog_writeCStr("[");
-	dbglog_writeHex(addr);
-	dbglog_writeCStr("]");
-	dbglog_WriteMemArrow(WriteMem);
-	dbglog_writeHex(Data);
-	dbglog_writeReturn();
+    dbglog_StartLine();
+    dbglog_writeCStr(s);
+    dbglog_writeCStr("[");
+    dbglog_writeHex(addr);
+    dbglog_writeCStr("]");
+    dbglog_WriteMemArrow(WriteMem);
+    dbglog_writeHex(Data);
+    dbglog_writeReturn();
 }
 #endif
 
 #if dbglog_HAVE
 GLOBALPROC dbglog_Access(char *s, ui5r Data, blnr WriteMem)
 {
-	dbglog_StartLine();
-	dbglog_writeCStr(s);
-	dbglog_WriteMemArrow(WriteMem);
-	dbglog_writeHex(Data);
-	dbglog_writeReturn();
+    dbglog_StartLine();
+    dbglog_writeCStr(s);
+    dbglog_WriteMemArrow(WriteMem);
+    dbglog_writeHex(Data);
+    dbglog_writeReturn();
 }
 #endif
 
 #if dbglog_HAVE
 GLOBALPROC dbglog_WriteNote(char *s)
 {
-	dbglog_StartLine();
-	dbglog_writeCStr(s);
-	dbglog_writeReturn();
+    dbglog_StartLine();
+    dbglog_writeCStr(s);
+    dbglog_writeReturn();
 }
 #endif
 
 #if dbglog_HAVE
 GLOBALPROC dbglog_WriteSetBool(char *s, blnr v)
 {
-	dbglog_StartLine();
-	dbglog_writeCStr(s);
-	dbglog_writeCStr(" <- ");
-	if (v) {
-		dbglog_writeCStr("1");
-	} else {
-		dbglog_writeCStr("0");
-	}
-	dbglog_writeReturn();
+    dbglog_StartLine();
+    dbglog_writeCStr(s);
+    dbglog_writeCStr(" <- ");
+    if (v) {
+        dbglog_writeCStr("1");
+    } else {
+        dbglog_writeCStr("0");
+    }
+    dbglog_writeReturn();
 }
 #endif
 
@@ -206,18 +206,18 @@ GLOBALPROC DoReportAbnormal(void)
 #endif
 {
 #if dbglog_HAVE
-	dbglog_StartLine();
-	dbglog_writeCStr("*** abnormal : ");
-	dbglog_writeCStr(s);
-	dbglog_writeReturn();
+    dbglog_StartLine();
+    dbglog_writeCStr("*** abnormal : ");
+    dbglog_writeCStr(s);
+    dbglog_writeReturn();
 #endif
-	if (! GotOneAbnormal) {
-		WarnMsgAbnormal();
+    if (! GotOneAbnormal) {
+        WarnMsgAbnormal();
 #if ReportAbnormalInterrupt
-		SetInterruptButton(trueblnr);
+        SetInterruptButton(trueblnr);
 #endif
-		GotOneAbnormal = trueblnr;
-	}
+        GotOneAbnormal = trueblnr;
+    }
 }
 
 /* map of address space */
@@ -290,29 +290,29 @@ GLOBALPROC DoReportAbnormal(void)
 
 #if IncludeExtnPbufs
 LOCALFUNC tMacErr PbufTransferVM(CPTR Buffera,
-	tPbuf i, ui5r offset, ui5r count, blnr IsWrite)
+    tPbuf i, ui5r offset, ui5r count, blnr IsWrite)
 {
-	tMacErr result;
-	ui5b contig;
-	ui3p Buffer;
+    tMacErr result;
+    ui5b contig;
+    ui3p Buffer;
 
 label_1:
-	if (0 == count) {
-		result = mnvm_noErr;
-	} else {
-		Buffer = get_real_address0(count, ! IsWrite, Buffera, &contig);
-		if (0 == contig) {
-			result = mnvm_miscErr;
-		} else {
-			PbufTransfer(Buffer, i, offset, contig, IsWrite);
-			offset += contig;
-			Buffera += contig;
-			count -= contig;
-			goto label_1;
-		}
-	}
+    if (0 == count) {
+        result = mnvm_noErr;
+    } else {
+        Buffer = get_real_address0(count, ! IsWrite, Buffera, &contig);
+        if (0 == contig) {
+            result = mnvm_miscErr;
+        } else {
+            PbufTransfer(Buffer, i, offset, contig, IsWrite);
+            offset += contig;
+            Buffera += contig;
+            count -= contig;
+            goto label_1;
+        }
+    }
 
-	return result;
+    return result;
 }
 #endif
 
@@ -329,75 +329,75 @@ label_1:
 #if IncludeExtnPbufs
 LOCALPROC ExtnParamBuffers_Access(CPTR p)
 {
-	tMacErr result = mnvm_controlErr;
+    tMacErr result = mnvm_controlErr;
 
-	switch (get_vm_word(p + ExtnDat_commnd)) {
-		case kCmndVersion:
-			put_vm_word(p + ExtnDat_version, 1);
-			result = mnvm_noErr;
-			break;
-		case kCmndPbufFeatures:
-			put_vm_long(p + ExtnDat_params + 0, 0);
-			result = mnvm_noErr;
-			break;
-		case kCmndPbufNew:
-			{
-				tPbuf Pbuf_No;
-				ui5b count = get_vm_long(p + ExtnDat_params + 4);
-				/* reserved word at offset 2, should be zero */
-				result = PbufNew(count, &Pbuf_No);
-				put_vm_word(p + ExtnDat_params + 0, Pbuf_No);
-			}
-			break;
-		case kCmndPbufDispose:
-			{
-				tPbuf Pbuf_No = get_vm_word(p + ExtnDat_params + 0);
-				/* reserved word at offset 2, should be zero */
-				result = CheckPbuf(Pbuf_No);
-				if (mnvm_noErr == result) {
-					PbufDispose(Pbuf_No);
-				}
-			}
-			break;
-		case kCmndPbufGetSize:
-			{
-				ui5r Count;
-				tPbuf Pbuf_No = get_vm_word(p + ExtnDat_params + 0);
-				/* reserved word at offset 2, should be zero */
+    switch (get_vm_word(p + ExtnDat_commnd)) {
+        case kCmndVersion:
+            put_vm_word(p + ExtnDat_version, 1);
+            result = mnvm_noErr;
+            break;
+        case kCmndPbufFeatures:
+            put_vm_long(p + ExtnDat_params + 0, 0);
+            result = mnvm_noErr;
+            break;
+        case kCmndPbufNew:
+            {
+                tPbuf Pbuf_No;
+                ui5b count = get_vm_long(p + ExtnDat_params + 4);
+                /* reserved word at offset 2, should be zero */
+                result = PbufNew(count, &Pbuf_No);
+                put_vm_word(p + ExtnDat_params + 0, Pbuf_No);
+            }
+            break;
+        case kCmndPbufDispose:
+            {
+                tPbuf Pbuf_No = get_vm_word(p + ExtnDat_params + 0);
+                /* reserved word at offset 2, should be zero */
+                result = CheckPbuf(Pbuf_No);
+                if (mnvm_noErr == result) {
+                    PbufDispose(Pbuf_No);
+                }
+            }
+            break;
+        case kCmndPbufGetSize:
+            {
+                ui5r Count;
+                tPbuf Pbuf_No = get_vm_word(p + ExtnDat_params + 0);
+                /* reserved word at offset 2, should be zero */
 
-				result = PbufGetSize(Pbuf_No, &Count);
-				if (mnvm_noErr == result) {
-					put_vm_long(p + ExtnDat_params + 4, Count);
-				}
-			}
-			break;
-		case kCmndPbufTransfer:
-			{
-				ui5r PbufCount;
-				tPbuf Pbuf_No = get_vm_word(p + ExtnDat_params + 0);
-				/* reserved word at offset 2, should be zero */
-				ui5r offset = get_vm_long(p + ExtnDat_params + 4);
-				ui5r count = get_vm_long(p + ExtnDat_params + 8);
-				CPTR Buffera = get_vm_long(p + ExtnDat_params + 12);
-				blnr IsWrite =
-					(get_vm_word(p + ExtnDat_params + 16) != 0);
-				result = PbufGetSize(Pbuf_No, &PbufCount);
-				if (mnvm_noErr == result) {
-					ui5r endoff = offset + count;
-					if ((endoff < offset) /* overflow */
-						|| (endoff > PbufCount))
-					{
-						result = mnvm_eofErr;
-					} else {
-						result = PbufTransferVM(Buffera,
-							Pbuf_No, offset, count, IsWrite);
-					}
-				}
-			}
-			break;
-	}
+                result = PbufGetSize(Pbuf_No, &Count);
+                if (mnvm_noErr == result) {
+                    put_vm_long(p + ExtnDat_params + 4, Count);
+                }
+            }
+            break;
+        case kCmndPbufTransfer:
+            {
+                ui5r PbufCount;
+                tPbuf Pbuf_No = get_vm_word(p + ExtnDat_params + 0);
+                /* reserved word at offset 2, should be zero */
+                ui5r offset = get_vm_long(p + ExtnDat_params + 4);
+                ui5r count = get_vm_long(p + ExtnDat_params + 8);
+                CPTR Buffera = get_vm_long(p + ExtnDat_params + 12);
+                blnr IsWrite =
+                    (get_vm_word(p + ExtnDat_params + 16) != 0);
+                result = PbufGetSize(Pbuf_No, &PbufCount);
+                if (mnvm_noErr == result) {
+                    ui5r endoff = offset + count;
+                    if ((endoff < offset) /* overflow */
+                        || (endoff > PbufCount))
+                    {
+                        result = mnvm_eofErr;
+                    } else {
+                        result = PbufTransferVM(Buffera,
+                            Pbuf_No, offset, count, IsWrite);
+                    }
+                }
+            }
+            break;
+    }
 
-	put_vm_word(p + ExtnDat_result, result);
+    put_vm_word(p + ExtnDat_result, result);
 }
 #endif
 
@@ -410,37 +410,37 @@ LOCALPROC ExtnParamBuffers_Access(CPTR p)
 #if IncludeExtnHostTextClipExchange
 LOCALPROC ExtnHostTextClipExchange_Access(CPTR p)
 {
-	tMacErr result = mnvm_controlErr;
+    tMacErr result = mnvm_controlErr;
 
-	switch (get_vm_word(p + ExtnDat_commnd)) {
-		case kCmndVersion:
-			put_vm_word(p + ExtnDat_version, 1);
-			result = mnvm_noErr;
-			break;
-		case kCmndHTCEFeatures:
-			put_vm_long(p + ExtnDat_params + 0, 0);
-			result = mnvm_noErr;
-			break;
-		case kCmndHTCEExport:
-			{
-				tPbuf Pbuf_No = get_vm_word(p + ExtnDat_params + 0);
+    switch (get_vm_word(p + ExtnDat_commnd)) {
+        case kCmndVersion:
+            put_vm_word(p + ExtnDat_version, 1);
+            result = mnvm_noErr;
+            break;
+        case kCmndHTCEFeatures:
+            put_vm_long(p + ExtnDat_params + 0, 0);
+            result = mnvm_noErr;
+            break;
+        case kCmndHTCEExport:
+            {
+                tPbuf Pbuf_No = get_vm_word(p + ExtnDat_params + 0);
 
-				result = CheckPbuf(Pbuf_No);
-				if (mnvm_noErr == result) {
-					result = HTCEexport(Pbuf_No);
-				}
-			}
-			break;
-		case kCmndHTCEImport:
-			{
-				tPbuf Pbuf_No;
-				result = HTCEimport(&Pbuf_No);
-				put_vm_word(p + ExtnDat_params + 0, Pbuf_No);
-			}
-			break;
-	}
+                result = CheckPbuf(Pbuf_No);
+                if (mnvm_noErr == result) {
+                    result = HTCEexport(Pbuf_No);
+                }
+            }
+            break;
+        case kCmndHTCEImport:
+            {
+                tPbuf Pbuf_No;
+                result = HTCEimport(&Pbuf_No);
+                put_vm_word(p + ExtnDat_params + 0, Pbuf_No);
+            }
+            break;
+    }
 
-	put_vm_word(p + ExtnDat_result, result);
+    put_vm_word(p + ExtnDat_result, result);
 }
 #endif
 
@@ -462,85 +462,85 @@ LOCALPROC ExtnHostTextClipExchange_Access(CPTR p)
 
 LOCALPROC ExtnFind_Access(CPTR p)
 {
-	tMacErr result = mnvm_controlErr;
+    tMacErr result = mnvm_controlErr;
 
-	switch (get_vm_word(p + ExtnDat_commnd)) {
-		case kCmndVersion:
-			put_vm_word(p + ExtnDat_version, 1);
-			result = mnvm_noErr;
-			break;
-		case kCmndFindExtnFind:
-			{
-				ui5b extn = get_vm_long(p + kParamFindExtnTheExtn);
+    switch (get_vm_word(p + ExtnDat_commnd)) {
+        case kCmndVersion:
+            put_vm_word(p + ExtnDat_version, 1);
+            result = mnvm_noErr;
+            break;
+        case kCmndFindExtnFind:
+            {
+                ui5b extn = get_vm_long(p + kParamFindExtnTheExtn);
 
-				if (extn == kDiskDriverExtension) {
-					put_vm_word(p + kParamFindExtnTheId, kExtnDisk);
-					result = mnvm_noErr;
-				} else
+                if (extn == kDiskDriverExtension) {
+                    put_vm_word(p + kParamFindExtnTheId, kExtnDisk);
+                    result = mnvm_noErr;
+                } else
 #if IncludeExtnPbufs
-				if (extn == kHostParamBuffersExtension) {
-					put_vm_word(p + kParamFindExtnTheId,
-						kExtnParamBuffers);
-					result = mnvm_noErr;
-				} else
+                if (extn == kHostParamBuffersExtension) {
+                    put_vm_word(p + kParamFindExtnTheId,
+                        kExtnParamBuffers);
+                    result = mnvm_noErr;
+                } else
 #endif
 #if IncludeExtnHostTextClipExchange
-				if (extn == kHostClipExchangeExtension) {
-					put_vm_word(p + kParamFindExtnTheId,
-						kExtnHostTextClipExchange);
-					result = mnvm_noErr;
-				} else
+                if (extn == kHostClipExchangeExtension) {
+                    put_vm_word(p + kParamFindExtnTheId,
+                        kExtnHostTextClipExchange);
+                    result = mnvm_noErr;
+                } else
 #endif
-				if (extn == kFindExtnExtension) {
-					put_vm_word(p + kParamFindExtnTheId,
-						kExtnFindExtn);
-					result = mnvm_noErr;
-				} else
-				{
-					/* not found */
-				}
-			}
-			break;
-		case kCmndFindExtnId2Code:
-			{
-				ui4r extn = get_vm_word(p + kParamFindExtnTheId);
+                if (extn == kFindExtnExtension) {
+                    put_vm_word(p + kParamFindExtnTheId,
+                        kExtnFindExtn);
+                    result = mnvm_noErr;
+                } else
+                {
+                    /* not found */
+                }
+            }
+            break;
+        case kCmndFindExtnId2Code:
+            {
+                ui4r extn = get_vm_word(p + kParamFindExtnTheId);
 
-				if (extn == kExtnDisk) {
-					put_vm_long(p + kParamFindExtnTheExtn,
-						kDiskDriverExtension);
-					result = mnvm_noErr;
-				} else
+                if (extn == kExtnDisk) {
+                    put_vm_long(p + kParamFindExtnTheExtn,
+                        kDiskDriverExtension);
+                    result = mnvm_noErr;
+                } else
 #if IncludeExtnPbufs
-				if (extn == kExtnParamBuffers) {
-					put_vm_long(p + kParamFindExtnTheExtn,
-						kHostParamBuffersExtension);
-					result = mnvm_noErr;
-				} else
+                if (extn == kExtnParamBuffers) {
+                    put_vm_long(p + kParamFindExtnTheExtn,
+                        kHostParamBuffersExtension);
+                    result = mnvm_noErr;
+                } else
 #endif
 #if IncludeExtnHostTextClipExchange
-				if (extn == kExtnHostTextClipExchange) {
-					put_vm_long(p + kParamFindExtnTheExtn,
-						kHostClipExchangeExtension);
-					result = mnvm_noErr;
-				} else
+                if (extn == kExtnHostTextClipExchange) {
+                    put_vm_long(p + kParamFindExtnTheExtn,
+                        kHostClipExchangeExtension);
+                    result = mnvm_noErr;
+                } else
 #endif
-				if (extn == kExtnFindExtn) {
-					put_vm_long(p + kParamFindExtnTheExtn,
-						kFindExtnExtension);
-					result = mnvm_noErr;
-				} else
-				{
-					/* not found */
-				}
-			}
-			break;
-		case kCmndFindExtnCount:
-			put_vm_word(p + kParamFindExtnTheId, kNumExtns);
-			result = mnvm_noErr;
-			break;
-	}
+                if (extn == kExtnFindExtn) {
+                    put_vm_long(p + kParamFindExtnTheExtn,
+                        kFindExtnExtension);
+                    result = mnvm_noErr;
+                } else
+                {
+                    /* not found */
+                }
+            }
+            break;
+        case kCmndFindExtnCount:
+            put_vm_word(p + kParamFindExtnTheId, kNumExtns);
+            result = mnvm_noErr;
+            break;
+    }
 
-	put_vm_word(p + ExtnDat_result, result);
+    put_vm_word(p + ExtnDat_result, result);
 }
 
 #define kDSK_Params_Hi 0
@@ -551,62 +551,62 @@ LOCALVAR ui4b ParamAddrHi;
 
 LOCALPROC Extn_Access(ui5b Data, CPTR addr)
 {
-	switch (addr) {
-		case kDSK_Params_Hi:
-			ParamAddrHi = Data;
-			break;
-		case kDSK_Params_Lo:
-			{
-				CPTR p = ParamAddrHi << 16 | Data;
+    switch (addr) {
+        case kDSK_Params_Hi:
+            ParamAddrHi = Data;
+            break;
+        case kDSK_Params_Lo:
+            {
+                CPTR p = ParamAddrHi << 16 | Data;
 
-				ParamAddrHi = (ui4b) - 1;
-				if (kcom_callcheck == get_vm_word(p + ExtnDat_checkval))
-				{
-					put_vm_word(p + ExtnDat_checkval, 0);
+                ParamAddrHi = (ui4b) - 1;
+                if (kcom_callcheck == get_vm_word(p + ExtnDat_checkval))
+                {
+                    put_vm_word(p + ExtnDat_checkval, 0);
 
-					switch (get_vm_word(p + ExtnDat_extension)) {
-						case kExtnFindExtn:
-							ExtnFind_Access(p);
-							break;
+                    switch (get_vm_word(p + ExtnDat_extension)) {
+                        case kExtnFindExtn:
+                            ExtnFind_Access(p);
+                            break;
 #if EmVidCard
-						case kExtnVideo:
-							ExtnVideo_Access(p);
-							break;
+                        case kExtnVideo:
+                            ExtnVideo_Access(p);
+                            break;
 #endif
 #if IncludeExtnPbufs
-						case kExtnParamBuffers:
-							ExtnParamBuffers_Access(p);
-							break;
+                        case kExtnParamBuffers:
+                            ExtnParamBuffers_Access(p);
+                            break;
 #endif
 #if IncludeExtnHostTextClipExchange
-						case kExtnHostTextClipExchange:
-							ExtnHostTextClipExchange_Access(p);
-							break;
+                        case kExtnHostTextClipExchange:
+                            ExtnHostTextClipExchange_Access(p);
+                            break;
 #endif
-						case kExtnDisk:
-							ExtnDisk_Access(p);
-							break;
-						case kExtnSony:
-							ExtnSony_Access(p);
-							break;
-						default:
-							put_vm_word(p + ExtnDat_result,
-								mnvm_controlErr);
-							break;
-					}
-				}
-			}
-			break;
-		case kDSK_QuitOnEject:
-			/* obsolete, kept for compatibility */
-			Sony_SetQuitOnEject();
-			break;
-	}
+                        case kExtnDisk:
+                            ExtnDisk_Access(p);
+                            break;
+                        case kExtnSony:
+                            ExtnSony_Access(p);
+                            break;
+                        default:
+                            put_vm_word(p + ExtnDat_result,
+                                mnvm_controlErr);
+                            break;
+                    }
+                }
+            }
+            break;
+        case kDSK_QuitOnEject:
+            /* obsolete, kept for compatibility */
+            Sony_SetQuitOnEject();
+            break;
+    }
 }
 
 GLOBALPROC Extn_Reset(void)
 {
-	ParamAddrHi = (ui4b) - 1;
+    ParamAddrHi = (ui4b) - 1;
 }
 
 /* implementation of read/write for everything but RAM and ROM */
@@ -649,27 +649,27 @@ GLOBALPROC Extn_Reset(void)
 #endif
 
 enum {
-	kMMDV_VIA1,
+    kMMDV_VIA1,
 #if EmVIA2
-	kMMDV_VIA2,
+    kMMDV_VIA2,
 #endif
-	kMMDV_SCC,
-	kMMDV_Extn,
+    kMMDV_SCC,
+    kMMDV_Extn,
 #if EmASC
-	kMMDV_ASC,
+    kMMDV_ASC,
 #endif
-	kMMDV_SCSI,
-	kMMDV_IWM,
+    kMMDV_SCSI,
+    kMMDV_IWM,
 
-	kNumMMDVs
+    kNumMMDVs
 };
 
 enum {
 #if CurEmMd >= kEmMd_SE
-	kMAN_OverlayOff,
+    kMAN_OverlayOff,
 #endif
 
-	kNumMANs
+    kNumMANs
 };
 
 
@@ -679,219 +679,219 @@ LOCALVAR ui4r LastATTel;
 
 LOCALPROC AddToATTList(ATTep p)
 {
-	ui4r NewLast = LastATTel + 1;
-	if (NewLast >= MaxATTListN) {
-		ReportAbnormal("MaxATTListN not big enough");
-	} else {
-		ATTListA[LastATTel] = *p;
-		LastATTel = NewLast;
-	}
+    ui4r NewLast = LastATTel + 1;
+    if (NewLast >= MaxATTListN) {
+        ReportAbnormal("MaxATTListN not big enough");
+    } else {
+        ATTListA[LastATTel] = *p;
+        LastATTel = NewLast;
+    }
 }
 
 LOCALPROC InitATTList(void)
 {
-	LastATTel = 0;
+    LastATTel = 0;
 }
 
 LOCALPROC FinishATTList(void)
 {
-	{
-		/* add guard */
-		ATTer r;
+    {
+        /* add guard */
+        ATTer r;
 
-		r.cmpmask = 0;
-		r.cmpvalu = 0;
-		r.usemask = 0;
-		r.usebase = nullpr;
-		r.Access = 0;
-		AddToATTList(&r);
-	}
+        r.cmpmask = 0;
+        r.cmpvalu = 0;
+        r.usemask = 0;
+        r.usebase = nullpr;
+        r.Access = 0;
+        AddToATTList(&r);
+    }
 
-	{
-		ui4r i = LastATTel;
-		ATTep p = &ATTListA[LastATTel];
-		ATTep h = nullpr;
+    {
+        ui4r i = LastATTel;
+        ATTep p = &ATTListA[LastATTel];
+        ATTep h = nullpr;
 
-		while (0 != i) {
-			--i;
-			--p;
-			p->Next = h;
-			h = p;
-		}
+        while (0 != i) {
+            --i;
+            --p;
+            p->Next = h;
+            h = p;
+        }
 
 #if 0 /* verify list. not for final version */
-		{
-			ATTep q1;
-			ATTep q2;
-			for (q1 = h; nullpr != q1->Next; q1 = q1->Next) {
-				if ((q1->cmpvalu & ~ q1->cmpmask) != 0) {
-					ReportAbnormal("ATTListA bad entry");
-				}
-				for (q2 = q1->Next; nullpr != q2->Next; q2 = q2->Next) {
-					ui5r common_mask = (q1->cmpmask) & (q2->cmpmask);
-					if ((q1->cmpvalu & common_mask) ==
-						(q2->cmpvalu & common_mask))
-					{
-						ReportAbnormal("ATTListA Conflict");
-					}
-				}
-			}
-		}
+        {
+            ATTep q1;
+            ATTep q2;
+            for (q1 = h; nullpr != q1->Next; q1 = q1->Next) {
+                if ((q1->cmpvalu & ~ q1->cmpmask) != 0) {
+                    ReportAbnormal("ATTListA bad entry");
+                }
+                for (q2 = q1->Next; nullpr != q2->Next; q2 = q2->Next) {
+                    ui5r common_mask = (q1->cmpmask) & (q2->cmpmask);
+                    if ((q1->cmpvalu & common_mask) ==
+                        (q2->cmpvalu & common_mask))
+                    {
+                        ReportAbnormal("ATTListA Conflict");
+                    }
+                }
+            }
+        }
 #endif
 
-		SetHeadATTel(h);
-	}
+        SetHeadATTel(h);
+    }
 }
 
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
 LOCALPROC SetUp_RAM24(void)
 {
-	ATTer r;
-	ui5r bankbit = 0x00100000 << (((VIA2_iA7 << 1) | VIA2_iA6) << 1);
+    ATTer r;
+    ui5r bankbit = 0x00100000 << (((VIA2_iA7 << 1) | VIA2_iA6) << 1);
 
 #if kRAMa_Size == kRAMb_Size
-	if (kRAMa_Size == bankbit) {
-		/* properly set up balanced RAM */
-		r.cmpmask = 0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1);
-		r.cmpvalu = 0;
-		r.usemask = ((1 << kRAM_ln2Spc) - 1) & (kRAM_Size - 1);
-		r.usebase = RAM;
-		r.Access = kATTA_readwritereadymask;
-		AddToATTList(&r);
-	} else
+    if (kRAMa_Size == bankbit) {
+        /* properly set up balanced RAM */
+        r.cmpmask = 0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1);
+        r.cmpvalu = 0;
+        r.usemask = ((1 << kRAM_ln2Spc) - 1) & (kRAM_Size - 1);
+        r.usebase = RAM;
+        r.Access = kATTA_readwritereadymask;
+        AddToATTList(&r);
+    } else
 #endif
-	{
-		bankbit &= 0x00FFFFFF; /* if too large, always use RAMa */
+    {
+        bankbit &= 0x00FFFFFF; /* if too large, always use RAMa */
 
-		if (0 != bankbit) {
+        if (0 != bankbit) {
 #if kRAMb_Size != 0
-			r.cmpmask = bankbit
-				| (0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1));
-			r.cmpvalu = bankbit;
-			r.usemask = ((1 << kRAM_ln2Spc) - 1) & (kRAMb_Size - 1);
-			r.usebase = kRAMa_Size + RAM;
-			r.Access = kATTA_readwritereadymask;
-			AddToATTList(&r);
+            r.cmpmask = bankbit
+                | (0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1));
+            r.cmpvalu = bankbit;
+            r.usemask = ((1 << kRAM_ln2Spc) - 1) & (kRAMb_Size - 1);
+            r.usebase = kRAMa_Size + RAM;
+            r.Access = kATTA_readwritereadymask;
+            AddToATTList(&r);
 #endif
-		}
+        }
 
-		{
-			r.cmpmask = bankbit
-				| (0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1));
-			r.cmpvalu = 0;
-			r.usemask = ((1 << kRAM_ln2Spc) - 1) & (kRAMa_Size - 1);
-			r.usebase = RAM;
-			r.Access = kATTA_readwritereadymask;
-			AddToATTList(&r);
-		}
-	}
+        {
+            r.cmpmask = bankbit
+                | (0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1));
+            r.cmpvalu = 0;
+            r.usemask = ((1 << kRAM_ln2Spc) - 1) & (kRAMa_Size - 1);
+            r.usebase = RAM;
+            r.Access = kATTA_readwritereadymask;
+            AddToATTList(&r);
+        }
+    }
 }
 #endif
 
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
 LOCALPROC SetUp_io(void)
 {
-	ATTer r;
+    ATTer r;
 
-	if (Addr32) {
-		r.cmpmask = 0xFF01E000;
-		r.cmpvalu = 0x50000000;
-	} else {
-		r.cmpmask = 0x00F1E000;
-		r.cmpvalu = 0x00F00000;
-	}
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_VIA1;
-	AddToATTList(&r);
+    if (Addr32) {
+        r.cmpmask = 0xFF01E000;
+        r.cmpvalu = 0x50000000;
+    } else {
+        r.cmpmask = 0x00F1E000;
+        r.cmpvalu = 0x00F00000;
+    }
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_VIA1;
+    AddToATTList(&r);
 
-	if (Addr32) {
-		r.cmpmask = 0xFF01E000;
-		r.cmpvalu = 0x50000000 | 0x2000;
-	} else {
-		r.cmpmask = 0x00F1E000;
-		r.cmpvalu = 0x00F00000 | 0x2000;
-	}
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_VIA2;
-	AddToATTList(&r);
+    if (Addr32) {
+        r.cmpmask = 0xFF01E000;
+        r.cmpvalu = 0x50000000 | 0x2000;
+    } else {
+        r.cmpmask = 0x00F1E000;
+        r.cmpvalu = 0x00F00000 | 0x2000;
+    }
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_VIA2;
+    AddToATTList(&r);
 
-	if (Addr32) {
-		r.cmpmask = 0xFF01E000;
-		r.cmpvalu = 0x50000000 | 0x4000;
-	} else {
-		r.cmpmask = 0x00F1E000;
-		r.cmpvalu = 0x00F00000 | 0x4000;
-	}
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_SCC;
-	AddToATTList(&r);
+    if (Addr32) {
+        r.cmpmask = 0xFF01E000;
+        r.cmpvalu = 0x50000000 | 0x4000;
+    } else {
+        r.cmpmask = 0x00F1E000;
+        r.cmpvalu = 0x00F00000 | 0x4000;
+    }
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_SCC;
+    AddToATTList(&r);
 
-	if (Addr32) {
-		r.cmpmask = 0xFF01E000;
-		r.cmpvalu = 0x50000000 | 0x0C000;
-	} else {
-		r.cmpmask = 0x00F1E000;
-		r.cmpvalu = 0x00F00000 | 0x0C000;
-	}
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_Extn;
-	AddToATTList(&r);
+    if (Addr32) {
+        r.cmpmask = 0xFF01E000;
+        r.cmpvalu = 0x50000000 | 0x0C000;
+    } else {
+        r.cmpmask = 0x00F1E000;
+        r.cmpvalu = 0x00F00000 | 0x0C000;
+    }
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_Extn;
+    AddToATTList(&r);
 
-	if (Addr32) {
-		r.cmpmask = 0xFF01E000;
-		r.cmpvalu = 0x50000000 | 0x10000;
-	} else {
-		r.cmpmask = 0x00F1E000;
-		r.cmpvalu = 0x00F00000 | 0x10000;
-	}
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_SCSI;
-	AddToATTList(&r);
+    if (Addr32) {
+        r.cmpmask = 0xFF01E000;
+        r.cmpvalu = 0x50000000 | 0x10000;
+    } else {
+        r.cmpmask = 0x00F1E000;
+        r.cmpvalu = 0x00F00000 | 0x10000;
+    }
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_SCSI;
+    AddToATTList(&r);
 
-	if (Addr32) {
-		r.cmpmask = 0xFF01E000;
-		r.cmpvalu = 0x50000000 | 0x14000;
-	} else {
-		r.cmpmask = 0x00F1E000;
-		r.cmpvalu = 0x00F00000 | 0x14000;
-	}
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_ASC;
-	AddToATTList(&r);
+    if (Addr32) {
+        r.cmpmask = 0xFF01E000;
+        r.cmpvalu = 0x50000000 | 0x14000;
+    } else {
+        r.cmpmask = 0x00F1E000;
+        r.cmpvalu = 0x00F00000 | 0x14000;
+    }
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_ASC;
+    AddToATTList(&r);
 
-	if (Addr32) {
-		r.cmpmask = 0xFF01E000;
-		r.cmpvalu = 0x50000000 | 0x16000;
-	} else {
-		r.cmpmask = 0x00F1E000;
-		r.cmpvalu = 0x00F00000 | 0x16000;
-	}
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_IWM;
-	AddToATTList(&r);
+    if (Addr32) {
+        r.cmpmask = 0xFF01E000;
+        r.cmpvalu = 0x50000000 | 0x16000;
+    } else {
+        r.cmpmask = 0x00F1E000;
+        r.cmpvalu = 0x00F00000 | 0x16000;
+    }
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_IWM;
+    AddToATTList(&r);
 
 #if 0
-		case 14:
-			/*
-				fail, nothing supposed to be here,
-				but rom accesses it anyway
-			*/
-			{
-				ui5r addr2 = addr & 0x1FFFF;
+        case 14:
+            /*
+                fail, nothing supposed to be here,
+                but rom accesses it anyway
+            */
+            {
+                ui5r addr2 = addr & 0x1FFFF;
 
-				if ((addr2 != 0x1DA00) && (addr2 != 0x1DC00)) {
-					ReportAbnormal("another unknown access");
-				}
-			}
-			get_fail_realblock(p);
-			break;
+                if ((addr2 != 0x1DA00) && (addr2 != 0x1DC00)) {
+                    ReportAbnormal("another unknown access");
+                }
+            }
+            get_fail_realblock(p);
+            break;
 #endif
 }
 #endif
@@ -899,179 +899,179 @@ LOCALPROC SetUp_io(void)
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
 LOCALPROC SetUp_address24(void)
 {
-	ATTer r;
+    ATTer r;
 
-	if (MemOverlay) {
-		ReportAbnormal("Overlay with 24 bit addressing");
-	}
+    if (MemOverlay) {
+        ReportAbnormal("Overlay with 24 bit addressing");
+    }
 
-	if (MemOverlay) {
-		r.cmpmask = Overlay_ROM_CmpZeroMask |
-			(0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1));
-		r.cmpvalu = kRAM_Base;
-		r.usemask = kROM_Size - 1;
-		r.usebase = ROM;
-		r.Access = kATTA_readreadymask;
-		AddToATTList(&r);
-	} else {
-		SetUp_RAM24();
-	}
+    if (MemOverlay) {
+        r.cmpmask = Overlay_ROM_CmpZeroMask |
+            (0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1));
+        r.cmpvalu = kRAM_Base;
+        r.usemask = kROM_Size - 1;
+        r.usebase = ROM;
+        r.Access = kATTA_readreadymask;
+        AddToATTList(&r);
+    } else {
+        SetUp_RAM24();
+    }
 
-	r.cmpmask = kROM_cmpmask;
-	r.cmpvalu = kROM_Base;
-	r.usemask = kROM_Size - 1;
-	r.usebase = ROM;
-	r.Access = kATTA_readreadymask;
-	AddToATTList(&r);
+    r.cmpmask = kROM_cmpmask;
+    r.cmpvalu = kROM_Base;
+    r.usemask = kROM_Size - 1;
+    r.usebase = ROM;
+    r.Access = kATTA_readreadymask;
+    AddToATTList(&r);
 
-	r.cmpmask = 0x00FFFFFF & ~ (0x100000 - 1);
-	r.cmpvalu = 0x900000;
-	r.usemask = (kVidMemRAM_Size - 1) & (0x100000 - 1);
-	r.usebase = VidMem;
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ (0x100000 - 1);
+    r.cmpvalu = 0x900000;
+    r.usemask = (kVidMemRAM_Size - 1) & (0x100000 - 1);
+    r.usebase = VidMem;
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 #if kVidMemRAM_Size >= 0x00200000
-	r.cmpmask = 0x00FFFFFF & ~ (0x100000 - 1);
-	r.cmpvalu = 0xA00000;
-	r.usemask = (0x100000 - 1);
-	r.usebase = VidMem + (1 << 20);
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ (0x100000 - 1);
+    r.cmpvalu = 0xA00000;
+    r.usemask = (0x100000 - 1);
+    r.usebase = VidMem + (1 << 20);
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 #endif
 #if kVidMemRAM_Size >= 0x00400000
-	r.cmpmask = 0x00FFFFFF & ~ (0x100000 - 1);
-	r.cmpvalu = 0xB00000;
-	r.usemask = (0x100000 - 1);
-	r.usebase = VidMem + (2 << 20);
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
-	r.cmpmask = 0x00FFFFFF & ~ (0x100000 - 1);
-	r.cmpvalu = 0xC00000;
-	r.usemask = (0x100000 - 1);
-	r.usebase = VidMem + (3 << 20);
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ (0x100000 - 1);
+    r.cmpvalu = 0xB00000;
+    r.usemask = (0x100000 - 1);
+    r.usebase = VidMem + (2 << 20);
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ (0x100000 - 1);
+    r.cmpvalu = 0xC00000;
+    r.usemask = (0x100000 - 1);
+    r.usebase = VidMem + (3 << 20);
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 #endif
 
-	SetUp_io();
+    SetUp_io();
 }
 #endif
 
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
 LOCALPROC SetUp_address32(void)
 {
-	ATTer r;
+    ATTer r;
 
-	if (MemOverlay) {
-		r.cmpmask = ~ ((1 << 30) - 1);
-		r.cmpvalu = 0;
-		r.usemask = kROM_Size - 1;
-		r.usebase = ROM;
-		r.Access = kATTA_readreadymask;
-		AddToATTList(&r);
-	} else {
-		ui5r bankbit =
-			0x00100000 << (((VIA2_iA7 << 1) | VIA2_iA6) << 1);
+    if (MemOverlay) {
+        r.cmpmask = ~ ((1 << 30) - 1);
+        r.cmpvalu = 0;
+        r.usemask = kROM_Size - 1;
+        r.usebase = ROM;
+        r.Access = kATTA_readreadymask;
+        AddToATTList(&r);
+    } else {
+        ui5r bankbit =
+            0x00100000 << (((VIA2_iA7 << 1) | VIA2_iA6) << 1);
 #if kRAMa_Size == kRAMb_Size
-		if (kRAMa_Size == bankbit) {
-			/* properly set up balanced RAM */
-			r.cmpmask = ~ ((1 << 30) - 1);
-			r.cmpvalu = 0;
-			r.usemask = kRAM_Size - 1;
-			r.usebase = RAM;
-			r.Access = kATTA_readwritereadymask;
-			AddToATTList(&r);
-		} else
+        if (kRAMa_Size == bankbit) {
+            /* properly set up balanced RAM */
+            r.cmpmask = ~ ((1 << 30) - 1);
+            r.cmpvalu = 0;
+            r.usemask = kRAM_Size - 1;
+            r.usebase = RAM;
+            r.Access = kATTA_readwritereadymask;
+            AddToATTList(&r);
+        } else
 #endif
-		{
+        {
 #if kRAMb_Size != 0
-			r.cmpmask = bankbit | ~ ((1 << 30) - 1);
-			r.cmpvalu = bankbit;
-			r.usemask = kRAMb_Size - 1;
-			r.usebase = kRAMa_Size + RAM;
-			r.Access = kATTA_readwritereadymask;
-			AddToATTList(&r);
+            r.cmpmask = bankbit | ~ ((1 << 30) - 1);
+            r.cmpvalu = bankbit;
+            r.usemask = kRAMb_Size - 1;
+            r.usebase = kRAMa_Size + RAM;
+            r.Access = kATTA_readwritereadymask;
+            AddToATTList(&r);
 #endif
 
-			r.cmpmask = bankbit | ~ ((1 << 30) - 1);
-			r.cmpvalu = 0;
-			r.usemask = kRAMa_Size - 1;
-			r.usebase = RAM;
-			r.Access = kATTA_readwritereadymask;
-			AddToATTList(&r);
-		}
-	}
+            r.cmpmask = bankbit | ~ ((1 << 30) - 1);
+            r.cmpvalu = 0;
+            r.usemask = kRAMa_Size - 1;
+            r.usebase = RAM;
+            r.Access = kATTA_readwritereadymask;
+            AddToATTList(&r);
+        }
+    }
 
-	r.cmpmask = ~ ((1 << 28) - 1);
-	r.cmpvalu = 0x40000000;
-	r.usemask = kROM_Size - 1;
-	r.usebase = ROM;
-	r.Access = kATTA_readreadymask;
-	AddToATTList(&r);
+    r.cmpmask = ~ ((1 << 28) - 1);
+    r.cmpvalu = 0x40000000;
+    r.usemask = kROM_Size - 1;
+    r.usebase = ROM;
+    r.Access = kATTA_readreadymask;
+    AddToATTList(&r);
 
 #if 0
-	/* haven't persuaded emulated computer to look here yet. */
-	/* NuBus super space */
-	r.cmpmask = ~ ((1 << 28) - 1);
-	r.cmpvalu = 0x90000000;
-	r.usemask = kVidMemRAM_Size - 1;
-	r.usebase = VidMem;
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    /* haven't persuaded emulated computer to look here yet. */
+    /* NuBus super space */
+    r.cmpmask = ~ ((1 << 28) - 1);
+    r.cmpvalu = 0x90000000;
+    r.usemask = kVidMemRAM_Size - 1;
+    r.usebase = VidMem;
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 #endif
 
-	/* Standard NuBus space */
-	r.cmpmask = ~ ((1 << 20) - 1);
-	r.cmpvalu = 0xF9F00000;
-	r.usemask = kVidROM_Size - 1;
-	r.usebase = VidROM;
-	r.Access = kATTA_readreadymask;
-	AddToATTList(&r);
+    /* Standard NuBus space */
+    r.cmpmask = ~ ((1 << 20) - 1);
+    r.cmpvalu = 0xF9F00000;
+    r.usemask = kVidROM_Size - 1;
+    r.usebase = VidROM;
+    r.Access = kATTA_readreadymask;
+    AddToATTList(&r);
 #if 0
-	r.cmpmask = ~ 0x007FFFFF;
-	r.cmpvalu = 0xF9000000;
-	r.usemask = 0x007FFFFF & (kVidMemRAM_Size - 1);
-	r.usebase = VidMem;
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    r.cmpmask = ~ 0x007FFFFF;
+    r.cmpvalu = 0xF9000000;
+    r.usemask = 0x007FFFFF & (kVidMemRAM_Size - 1);
+    r.usebase = VidMem;
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 #endif
 
-	r.cmpmask = ~ 0x000FFFFF;
-	r.cmpvalu = 0xF9900000;
-	r.usemask = 0x000FFFFF & (kVidMemRAM_Size - 1);
-	r.usebase = VidMem;
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    r.cmpmask = ~ 0x000FFFFF;
+    r.cmpvalu = 0xF9900000;
+    r.usemask = 0x000FFFFF & (kVidMemRAM_Size - 1);
+    r.usebase = VidMem;
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 /* kludge to allow more than 1M of Video Memory */
 #if kVidMemRAM_Size >= 0x00200000
-	r.cmpmask = ~ 0x000FFFFF;
-	r.cmpvalu = 0xF9A00000;
-	r.usemask = 0x000FFFFF & (kVidMemRAM_Size - 1);
-	r.usebase = VidMem + (1 << 20);
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    r.cmpmask = ~ 0x000FFFFF;
+    r.cmpvalu = 0xF9A00000;
+    r.usemask = 0x000FFFFF & (kVidMemRAM_Size - 1);
+    r.usebase = VidMem + (1 << 20);
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 #endif
 #if kVidMemRAM_Size >= 0x00400000
-	r.cmpmask = ~ 0x000FFFFF;
-	r.cmpvalu = 0xF9B00000;
-	r.usemask = 0x000FFFFF & (kVidMemRAM_Size - 1);
-	r.usebase = VidMem + (2 << 20);
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
-	r.cmpmask = ~ 0x000FFFFF;
-	r.cmpvalu = 0xF9C00000;
-	r.usemask = 0x000FFFFF & (kVidMemRAM_Size - 1);
-	r.usebase = VidMem + (3 << 20);
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    r.cmpmask = ~ 0x000FFFFF;
+    r.cmpvalu = 0xF9B00000;
+    r.usemask = 0x000FFFFF & (kVidMemRAM_Size - 1);
+    r.usebase = VidMem + (2 << 20);
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
+    r.cmpmask = ~ 0x000FFFFF;
+    r.cmpvalu = 0xF9C00000;
+    r.usemask = 0x000FFFFF & (kVidMemRAM_Size - 1);
+    r.usebase = VidMem + (3 << 20);
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 #endif
 
-	SetUp_io();
+    SetUp_io();
 
 #if 0
-	if ((addr >= 0x58000000) && (addr < 0x58000004)) {
-		/* test hardware. fail */
-	}
+    if ((addr >= 0x58000000) && (addr < 0x58000004)) {
+        /* test hardware. fail */
+    }
 #endif
 }
 #endif
@@ -1079,53 +1079,53 @@ LOCALPROC SetUp_address32(void)
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
 LOCALPROC SetUp_address(void)
 {
-	if (Addr32) {
-		SetUp_address32();
-	} else {
-		SetUp_address24();
-	}
+    if (Addr32) {
+        SetUp_address32();
+    } else {
+        SetUp_address24();
+    }
 }
 #endif
 
 /*
-	unlike in the real Mac Plus, Mini vMac
-	will allow misaligned memory access,
-	since it is easier to allow it than
-	it is to correctly simulate a bus error
-	and back out of the current instruction.
+    unlike in the real Mac Plus, Mini vMac
+    will allow misaligned memory access,
+    since it is easier to allow it than
+    it is to correctly simulate a bus error
+    and back out of the current instruction.
 */
 
 #if (CurEmMd != kEmMd_II) && (CurEmMd != kEmMd_IIx)
 LOCALPROC SetUp_RAM24(void)
 {
-	ATTer r;
+    ATTer r;
 
 #if (0 == kRAMb_Size) || (kRAMa_Size == kRAMb_Size)
-	r.cmpmask = 0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1);
-	r.cmpvalu = kRAM_Base;
-	r.usemask = kRAM_Size - 1;
-	r.usebase = RAM;
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1);
+    r.cmpvalu = kRAM_Base;
+    r.usemask = kRAM_Size - 1;
+    r.usebase = RAM;
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 #else
-	/* unbalanced memory */
+    /* unbalanced memory */
 
 #if 0 != (0x00FFFFFF & kRAMa_Size)
-	/* condition should always be true if configuration file right */
-	r.cmpmask = 0x00FFFFFF & (kRAMa_Size | ~ ((1 << kRAM_ln2Spc) - 1));
-	r.cmpvalu = kRAM_Base + kRAMa_Size;
-	r.usemask = kRAMb_Size - 1;
-	r.usebase = kRAMa_Size + RAM;
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    /* condition should always be true if configuration file right */
+    r.cmpmask = 0x00FFFFFF & (kRAMa_Size | ~ ((1 << kRAM_ln2Spc) - 1));
+    r.cmpvalu = kRAM_Base + kRAMa_Size;
+    r.usemask = kRAMb_Size - 1;
+    r.usebase = kRAMa_Size + RAM;
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 #endif
 
-	r.cmpmask = 0x00FFFFFF & (kRAMa_Size | ~ ((1 << kRAM_ln2Spc) - 1));
-	r.cmpvalu = kRAM_Base;
-	r.usemask = kRAMa_Size - 1;
-	r.usebase = RAM;
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & (kRAMa_Size | ~ ((1 << kRAM_ln2Spc) - 1));
+    r.cmpvalu = kRAM_Base;
+    r.usemask = kRAMa_Size - 1;
+    r.usebase = RAM;
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 #endif
 }
 #endif
@@ -1133,464 +1133,464 @@ LOCALPROC SetUp_RAM24(void)
 #if (CurEmMd != kEmMd_II) && (CurEmMd != kEmMd_IIx)
 LOCALPROC SetUp_address(void)
 {
-	ATTer r;
+    ATTer r;
 
-	if (MemOverlay) {
-		r.cmpmask = Overlay_ROM_CmpZeroMask |
-			(0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1));
-		r.cmpvalu = kRAM_Base;
-		r.usemask = kROM_Size - 1;
-		r.usebase = ROM;
-		r.Access = kATTA_readreadymask;
-		AddToATTList(&r);
-	} else {
-		SetUp_RAM24();
-	}
+    if (MemOverlay) {
+        r.cmpmask = Overlay_ROM_CmpZeroMask |
+            (0x00FFFFFF & ~ ((1 << kRAM_ln2Spc) - 1));
+        r.cmpvalu = kRAM_Base;
+        r.usemask = kROM_Size - 1;
+        r.usebase = ROM;
+        r.Access = kATTA_readreadymask;
+        AddToATTList(&r);
+    } else {
+        SetUp_RAM24();
+    }
 
-	r.cmpmask = kROM_cmpmask;
-	r.cmpvalu = kROM_Base;
+    r.cmpmask = kROM_cmpmask;
+    r.cmpvalu = kROM_Base;
 #if (CurEmMd >= kEmMd_SE)
-	if (MemOverlay) {
-		r.usebase = nullpr;
-		r.Access = kATTA_ntfymask;
-		r.Ntfy = kMAN_OverlayOff;
-	} else
+    if (MemOverlay) {
+        r.usebase = nullpr;
+        r.Access = kATTA_ntfymask;
+        r.Ntfy = kMAN_OverlayOff;
+    } else
 #endif
-	{
-		r.usemask = kROM_Size - 1;
-		r.usebase = ROM;
-		r.Access = kATTA_readreadymask;
-	}
-	AddToATTList(&r);
+    {
+        r.usemask = kROM_Size - 1;
+        r.usebase = ROM;
+        r.Access = kATTA_readreadymask;
+    }
+    AddToATTList(&r);
 
-	if (MemOverlay) {
-		r.cmpmask = 0x00E00000;
-		r.cmpvalu = kRAM_Overlay_Base;
+    if (MemOverlay) {
+        r.cmpmask = 0x00E00000;
+        r.cmpvalu = kRAM_Overlay_Base;
 #if (0 == kRAMb_Size) || (kRAMa_Size == kRAMb_Size)
-		r.usemask = kRAM_Size - 1;
-			/* note that cmpmask and usemask overlap for 4M */
-		r.usebase = RAM;
-		r.Access = kATTA_readwritereadymask;
+        r.usemask = kRAM_Size - 1;
+            /* note that cmpmask and usemask overlap for 4M */
+        r.usebase = RAM;
+        r.Access = kATTA_readwritereadymask;
 #else
-		/* unbalanced memory */
-		r.usemask = kRAMb_Size - 1;
-		r.usebase = kRAMa_Size + RAM;
-		r.Access = kATTA_readwritereadymask;
+        /* unbalanced memory */
+        r.usemask = kRAMb_Size - 1;
+        r.usebase = kRAMa_Size + RAM;
+        r.Access = kATTA_readwritereadymask;
 #endif
-		AddToATTList(&r);
-	}
+        AddToATTList(&r);
+    }
 
 #if IncludeVidMem
-	r.cmpmask = 0x00FFFFFF & ~ ((1 << kVidMem_ln2Spc) - 1);
-	r.cmpvalu = kVidMem_Base;
-	r.usemask = kVidMemRAM_Size - 1;
-	r.usebase = VidMem;
-	r.Access = kATTA_readwritereadymask;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ ((1 << kVidMem_ln2Spc) - 1);
+    r.cmpvalu = kVidMem_Base;
+    r.usemask = kVidMemRAM_Size - 1;
+    r.usebase = VidMem;
+    r.Access = kATTA_readwritereadymask;
+    AddToATTList(&r);
 #endif
 
-	r.cmpmask = 0x00FFFFFF & ~ ((1 << kVIA1_ln2Spc) - 1);
-	r.cmpvalu = kVIA1_Block_Base;
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_VIA1;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ ((1 << kVIA1_ln2Spc) - 1);
+    r.cmpvalu = kVIA1_Block_Base;
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_VIA1;
+    AddToATTList(&r);
 
-	r.cmpmask = 0x00FFFFFF & ~ ((1 << kSCC_ln2Spc) - 1);
-	r.cmpvalu = kSCCRd_Block_Base;
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_SCC;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ ((1 << kSCC_ln2Spc) - 1);
+    r.cmpvalu = kSCCRd_Block_Base;
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_SCC;
+    AddToATTList(&r);
 
-	r.cmpmask = 0x00FFFFFF & ~ ((1 << kExtn_ln2Spc) - 1);
-	r.cmpvalu = kExtn_Block_Base;
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_Extn;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ ((1 << kExtn_ln2Spc) - 1);
+    r.cmpvalu = kExtn_Block_Base;
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_Extn;
+    AddToATTList(&r);
 
 #if CurEmMd == kEmMd_PB100
-	r.cmpmask = 0x00FFFFFF & ~ ((1 << kASC_ln2Spc) - 1);
-	r.cmpvalu = kASC_Block_Base;
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_ASC;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ ((1 << kASC_ln2Spc) - 1);
+    r.cmpvalu = kASC_Block_Base;
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_ASC;
+    AddToATTList(&r);
 #endif
 
-	r.cmpmask = 0x00FFFFFF & ~ ((1 << kSCSI_ln2Spc) - 1);
-	r.cmpvalu = kSCSI_Block_Base;
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_SCSI;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ ((1 << kSCSI_ln2Spc) - 1);
+    r.cmpvalu = kSCSI_Block_Base;
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_SCSI;
+    AddToATTList(&r);
 
-	r.cmpmask = 0x00FFFFFF & ~ ((1 << kIWM_ln2Spc) - 1);
-	r.cmpvalu = kIWM_Block_Base;
-	r.usebase = nullpr;
-	r.Access = kATTA_mmdvmask;
-	r.MMDV = kMMDV_IWM;
-	AddToATTList(&r);
+    r.cmpmask = 0x00FFFFFF & ~ ((1 << kIWM_ln2Spc) - 1);
+    r.cmpvalu = kIWM_Block_Base;
+    r.usebase = nullpr;
+    r.Access = kATTA_mmdvmask;
+    r.MMDV = kMMDV_IWM;
+    AddToATTList(&r);
 }
 #endif
 
 LOCALPROC SetUpMemBanks(void)
 {
-	InitATTList();
+    InitATTList();
 
-	SetUp_address();
+    SetUp_address();
 
-	FinishATTList();
+    FinishATTList();
 }
 
 #if 0
 LOCALPROC get_fail_realblock(ATTep p)
 {
-	p->cmpmask = 0;
-	p->cmpvalu = 0xFFFFFFFF;
-	p->usemask = 0;
-	p->usebase = nullpr;
-	p->Access = 0;
+    p->cmpmask = 0;
+    p->cmpvalu = 0xFFFFFFFF;
+    p->usemask = 0;
+    p->usebase = nullpr;
+    p->Access = 0;
 }
 #endif
 
 GLOBALFUNC ui5b MMDV_Access(ATTep p, ui5b Data,
-	blnr WriteMem, blnr ByteSize, CPTR addr)
+    blnr WriteMem, blnr ByteSize, CPTR addr)
 {
-	switch (p->MMDV) {
-		case kMMDV_VIA1:
-			if (! ByteSize) {
-				ReportAbnormal("access VIA1 word");
-			} else if ((addr & 1) != 0) {
-				ReportAbnormal("access VIA1 odd");
-			} else {
+    switch (p->MMDV) {
+        case kMMDV_VIA1:
+            if (! ByteSize) {
+                ReportAbnormal("access VIA1 word");
+            } else if ((addr & 1) != 0) {
+                ReportAbnormal("access VIA1 odd");
+            } else {
 #if CurEmMd != kEmMd_PB100
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
-				if ((addr & 0x000001FE) != 0x00000000)
+                if ((addr & 0x000001FE) != 0x00000000)
 #else
-				if ((addr & 0x000FE1FE) != 0x000FE1FE)
+                if ((addr & 0x000FE1FE) != 0x000FE1FE)
 #endif
-				{
-					ReportAbnormal("access VIA1 nonstandard address");
-				}
+                {
+                    ReportAbnormal("access VIA1 nonstandard address");
+                }
 #endif
-				Data = VIA1_Access(Data, WriteMem,
-					(addr >> 9) & kVIA1_Mask);
-			}
+                Data = VIA1_Access(Data, WriteMem,
+                    (addr >> 9) & kVIA1_Mask);
+            }
 
-			break;
+            break;
 #if EmVIA2
-		case kMMDV_VIA2:
-			if (! ByteSize) {
-				if ((! WriteMem)
-					&& ((0x3e00 == (addr & 0x1FFFF))
-						|| (0x3e02 == (addr & 0x1FFFF))))
-				{
-					/* for weirdness at offset 0x71E in ROM */
-					Data =
-						(VIA2_Access(Data, WriteMem,
-							(addr >> 9) & kVIA2_Mask) << 8)
-						| VIA2_Access(Data, WriteMem,
-							(addr >> 9) & kVIA2_Mask);
+        case kMMDV_VIA2:
+            if (! ByteSize) {
+                if ((! WriteMem)
+                    && ((0x3e00 == (addr & 0x1FFFF))
+                        || (0x3e02 == (addr & 0x1FFFF))))
+                {
+                    /* for weirdness at offset 0x71E in ROM */
+                    Data =
+                        (VIA2_Access(Data, WriteMem,
+                            (addr >> 9) & kVIA2_Mask) << 8)
+                        | VIA2_Access(Data, WriteMem,
+                            (addr >> 9) & kVIA2_Mask);
 
-				} else {
-					ReportAbnormal("access VIA2 word");
-				}
-			} else if ((addr & 1) != 0) {
-				if (0x3FFF == (addr & 0x1FFFF)) {
-					/*
-						for weirdness at offset 0x7C4 in ROM.
-						looks like bug.
-					*/
-					Data = VIA2_Access(Data, WriteMem,
-						(addr >> 9) & kVIA2_Mask);
-				} else {
-					ReportAbnormal("access VIA2 odd");
-				}
-			} else {
-				if ((addr & 0x000001FE) != 0x00000000) {
-					ReportAbnormal("access VIA2 nonstandard address");
-				}
-				Data = VIA2_Access(Data, WriteMem,
-					(addr >> 9) & kVIA2_Mask);
-			}
-			break;
+                } else {
+                    ReportAbnormal("access VIA2 word");
+                }
+            } else if ((addr & 1) != 0) {
+                if (0x3FFF == (addr & 0x1FFFF)) {
+                    /*
+                        for weirdness at offset 0x7C4 in ROM.
+                        looks like bug.
+                    */
+                    Data = VIA2_Access(Data, WriteMem,
+                        (addr >> 9) & kVIA2_Mask);
+                } else {
+                    ReportAbnormal("access VIA2 odd");
+                }
+            } else {
+                if ((addr & 0x000001FE) != 0x00000000) {
+                    ReportAbnormal("access VIA2 nonstandard address");
+                }
+                Data = VIA2_Access(Data, WriteMem,
+                    (addr >> 9) & kVIA2_Mask);
+            }
+            break;
 #endif
-		case kMMDV_SCC:
+        case kMMDV_SCC:
 
 #if (CurEmMd >= kEmMd_SE) \
-	&& ! ((CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx))
+    && ! ((CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx))
 
-			if ((addr & 0x00100000) == 0) {
-				ReportAbnormal("access SCC unassigned address");
-			} else
+            if ((addr & 0x00100000) == 0) {
+                ReportAbnormal("access SCC unassigned address");
+            } else
 #endif
-			if (! ByteSize) {
-				ReportAbnormal("Attemped Phase Adjust");
-			} else
+            if (! ByteSize) {
+                ReportAbnormal("Attemped Phase Adjust");
+            } else
 #if ! ((CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx))
-			if (WriteMem != ((addr & 1) != 0)) {
-				if (WriteMem) {
+            if (WriteMem != ((addr & 1) != 0)) {
+                if (WriteMem) {
 #if CurEmMd >= kEmMd_512Ke
 #if CurEmMd != kEmMd_PB100
-					ReportAbnormal("access SCC even/odd");
-					/*
-						This happens on boot with 64k ROM.
-					*/
+                    ReportAbnormal("access SCC even/odd");
+                    /*
+                        This happens on boot with 64k ROM.
+                    */
 #endif
 #endif
-				} else {
-					SCC_Reset();
-				}
-			} else
+                } else {
+                    SCC_Reset();
+                }
+            } else
 #endif
 #if (CurEmMd != kEmMd_PB100) \
-	&& ! ((CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx))
+    && ! ((CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx))
 
-			if (WriteMem != (addr >= kSCCWr_Block_Base)) {
-				ReportAbnormal("access SCC wr/rd base wrong");
-			} else
+            if (WriteMem != (addr >= kSCCWr_Block_Base)) {
+                ReportAbnormal("access SCC wr/rd base wrong");
+            } else
 #endif
-			{
+            {
 #if CurEmMd != kEmMd_PB100
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
-				if ((addr & 0x1FF9) != 0x00000000)
+                if ((addr & 0x1FF9) != 0x00000000)
 #else
-				if ((addr & 0x001FFFF8) != 0x001FFFF8)
+                if ((addr & 0x001FFFF8) != 0x001FFFF8)
 #endif
-				{
-					ReportAbnormal("access SCC nonstandard address");
-				}
+                {
+                    ReportAbnormal("access SCC nonstandard address");
+                }
 #endif
-				Data = SCC_Access(Data, WriteMem,
-					(addr >> 1) & kSCC_Mask);
-			}
-			break;
-		case kMMDV_Extn:
-			if (ByteSize) {
-				ReportAbnormal("access Sony byte");
-			} else if ((addr & 1) != 0) {
-				ReportAbnormal("access Sony odd");
-			} else if (! WriteMem) {
-				ReportAbnormal("access Sony read");
-			} else {
-				Extn_Access(Data, (addr >> 1) & 0x0F);
-			}
-			break;
+                Data = SCC_Access(Data, WriteMem,
+                    (addr >> 1) & kSCC_Mask);
+            }
+            break;
+        case kMMDV_Extn:
+            if (ByteSize) {
+                ReportAbnormal("access Sony byte");
+            } else if ((addr & 1) != 0) {
+                ReportAbnormal("access Sony odd");
+            } else if (! WriteMem) {
+                ReportAbnormal("access Sony read");
+            } else {
+                Extn_Access(Data, (addr >> 1) & 0x0F);
+            }
+            break;
 #if EmASC
-		case kMMDV_ASC:
-			if (! ByteSize) {
+        case kMMDV_ASC:
+            if (! ByteSize) {
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
-				if (WriteMem) {
-					(void) ASC_Access((Data >> 8) & 0x00FF,
-						WriteMem, addr & kASC_Mask);
-					Data = ASC_Access((Data) & 0x00FF,
-						WriteMem, (addr + 1) & kASC_Mask);
-				} else {
-					Data =
-						(ASC_Access((Data >> 8) & 0x00FF,
-							WriteMem, addr & kASC_Mask) << 8)
-						| ASC_Access((Data) & 0x00FF,
-							WriteMem, (addr + 1) & kASC_Mask);
-				}
+                if (WriteMem) {
+                    (void) ASC_Access((Data >> 8) & 0x00FF,
+                        WriteMem, addr & kASC_Mask);
+                    Data = ASC_Access((Data) & 0x00FF,
+                        WriteMem, (addr + 1) & kASC_Mask);
+                } else {
+                    Data =
+                        (ASC_Access((Data >> 8) & 0x00FF,
+                            WriteMem, addr & kASC_Mask) << 8)
+                        | ASC_Access((Data) & 0x00FF,
+                            WriteMem, (addr + 1) & kASC_Mask);
+                }
 #else
-				ReportAbnormal("access ASC word");
+                ReportAbnormal("access ASC word");
 #endif
-			} else {
-				Data = ASC_Access(Data, WriteMem, addr & kASC_Mask);
-			}
-			break;
+            } else {
+                Data = ASC_Access(Data, WriteMem, addr & kASC_Mask);
+            }
+            break;
 #endif
-		case kMMDV_SCSI:
-			if (! ByteSize) {
-				ReportAbnormal("access SCSI word");
-			} else
+        case kMMDV_SCSI:
+            if (! ByteSize) {
+                ReportAbnormal("access SCSI word");
+            } else
 #if ! ((CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx))
-			if (WriteMem != ((addr & 1) != 0)) {
-				ReportAbnormal("access SCSI even/odd");
-			} else
+            if (WriteMem != ((addr & 1) != 0)) {
+                ReportAbnormal("access SCSI even/odd");
+            } else
 #endif
-			{
+            {
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
-				if ((addr & 0x1F8F) != 0x00000000) {
-					ReportAbnormal("access SCSI nonstandard address");
-				}
+                if ((addr & 0x1F8F) != 0x00000000) {
+                    ReportAbnormal("access SCSI nonstandard address");
+                }
 #endif
-				Data = SCSI_Access(Data, WriteMem, (addr >> 4) & 0x07);
-			}
+                Data = SCSI_Access(Data, WriteMem, (addr >> 4) & 0x07);
+            }
 
-			break;
-		case kMMDV_IWM:
+            break;
+        case kMMDV_IWM:
 #if (CurEmMd >= kEmMd_SE) \
-	&& ! ((CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx))
+    && ! ((CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx))
 
-			if ((addr & 0x00100000) == 0) {
-				ReportAbnormal("access IWM unassigned address");
-			} else
+            if ((addr & 0x00100000) == 0) {
+                ReportAbnormal("access IWM unassigned address");
+            } else
 #endif
-			if (! ByteSize) {
+            if (! ByteSize) {
 #if ExtraAbnormalReports
-				ReportAbnormal("access IWM word");
-				/*
-					This happens when quitting 'Glider 3.1.2'.
-					perhaps a bad handle is being disposed of.
-				*/
+                ReportAbnormal("access IWM word");
+                /*
+                    This happens when quitting 'Glider 3.1.2'.
+                    perhaps a bad handle is being disposed of.
+                */
 #endif
-			} else
+            } else
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
-			if ((addr & 1) != 0) {
-				ReportAbnormal("access IWM odd");
-			} else
+            if ((addr & 1) != 0) {
+                ReportAbnormal("access IWM odd");
+            } else
 #else
-			if ((addr & 1) == 0) {
-				ReportAbnormal("access IWM even");
-			} else
+            if ((addr & 1) == 0) {
+                ReportAbnormal("access IWM even");
+            } else
 #endif
-			{
+            {
 #if (CurEmMd != kEmMd_PB100) \
-	&& ! ((CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx))
+    && ! ((CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx))
 
-				if ((addr & 0x001FE1FF) != 0x001FE1FF) {
-					ReportAbnormal("access IWM nonstandard address");
-				}
+                if ((addr & 0x001FE1FF) != 0x001FE1FF) {
+                    ReportAbnormal("access IWM nonstandard address");
+                }
 #endif
-				Data = IWM_Access(Data, WriteMem,
-					(addr >> 9) & kIWM_Mask);
-			}
+                Data = IWM_Access(Data, WriteMem,
+                    (addr >> 9) & kIWM_Mask);
+            }
 
-			break;
-	}
+            break;
+    }
 
-	return Data;
+    return Data;
 }
 
 GLOBALFUNC blnr MemAccessNtfy(ATTep pT)
 {
-	blnr v = falseblnr;
+    blnr v = falseblnr;
 
-	switch (pT->Ntfy) {
+    switch (pT->Ntfy) {
 #if CurEmMd >= kEmMd_SE
-		case kMAN_OverlayOff:
-			pT->Access = kATTA_readreadymask;
+        case kMAN_OverlayOff:
+            pT->Access = kATTA_readreadymask;
 
-			MemOverlay = 0;
-			SetUpMemBanks();
+            MemOverlay = 0;
+            SetUpMemBanks();
 
-			v = trueblnr;
+            v = trueblnr;
 
-			break;
+            break;
 #endif
-	}
+    }
 
-	return v;
+    return v;
 }
 
 GLOBALPROC MemOverlay_ChangeNtfy(void)
 {
 #if CurEmMd <= kEmMd_Plus
-	SetUpMemBanks();
+    SetUpMemBanks();
 #elif (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
-	SetUpMemBanks();
+    SetUpMemBanks();
 #endif
 }
 
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
 GLOBALPROC Addr32_ChangeNtfy(void)
 {
-	SetUpMemBanks();
+    SetUpMemBanks();
 }
 #endif
 
 LOCALFUNC ATTep get_address_realblock1(blnr WriteMem, CPTR addr)
 {
-	ATTep p;
+    ATTep p;
 
 Label_Retry:
-	p = FindATTel(addr);
-	if (0 != (p->Access &
-		(WriteMem ? kATTA_writereadymask : kATTA_readreadymask)))
-	{
-		/* ok */
-	} else {
-		if (0 != (p->Access & kATTA_ntfymask)) {
-			if (MemAccessNtfy(p)) {
-				goto Label_Retry;
-			}
-		}
-		p = nullpr; /* fail */
-	}
+    p = FindATTel(addr);
+    if (0 != (p->Access &
+        (WriteMem ? kATTA_writereadymask : kATTA_readreadymask)))
+    {
+        /* ok */
+    } else {
+        if (0 != (p->Access & kATTA_ntfymask)) {
+            if (MemAccessNtfy(p)) {
+                goto Label_Retry;
+            }
+        }
+        p = nullpr; /* fail */
+    }
 
-	return p;
+    return p;
 }
 
 GLOBALFUNC ui3p get_real_address0(ui5b L, blnr WritableMem, CPTR addr,
-	ui5b *actL)
+    ui5b *actL)
 {
-	ui5b RealSize;
-	ui5b bankleft;
-	ui3p p;
-	ATTep q;
+    ui5b RealSize;
+    ui5b bankleft;
+    ui3p p;
+    ATTep q;
 
-	q = get_address_realblock1(WritableMem, addr);
-	if (nullpr == q) {
-		*actL = 0;
-		p = nullpr;
-	} else {
-		ui5b bankoffset = addr & q->usemask;
-		RealSize = q->usemask + 1;
-		bankleft = RealSize - bankoffset;
-		p = bankoffset + q->usebase;
-		if (bankleft >= L) {
-			/* this block is big enough (by far the most common case) */
-			*actL = L;
-		} else {
-			/*
-				not big enough, look if following block
-				is contiguous in real memory.
-			*/
-			ui3p bankend;
-			ui5b n = L;
+    q = get_address_realblock1(WritableMem, addr);
+    if (nullpr == q) {
+        *actL = 0;
+        p = nullpr;
+    } else {
+        ui5b bankoffset = addr & q->usemask;
+        RealSize = q->usemask + 1;
+        bankleft = RealSize - bankoffset;
+        p = bankoffset + q->usebase;
+        if (bankleft >= L) {
+            /* this block is big enough (by far the most common case) */
+            *actL = L;
+        } else {
+            /*
+                not big enough, look if following block
+                is contiguous in real memory.
+            */
+            ui3p bankend;
+            ui5b n = L;
 label_1:
-			addr += bankleft;
-			n -= bankleft;
-			bankend = RealSize + q->usebase;
+            addr += bankleft;
+            n -= bankleft;
+            bankend = RealSize + q->usebase;
 
-			q = get_address_realblock1(WritableMem, addr);
-			if ((nullpr == q)
-				|| (q->usebase != bankend))
-			{
-				/* following block not contiguous */
-				*actL = L - n;
-			} else {
-				RealSize = q->usemask + 1;
-				if (RealSize >= n) {
-					/* following block is contiguous and big enough */
-					*actL = L; /* ok */
-				} else {
-					bankoffset = addr & q->usemask;
-					if (bankoffset != 0) {
-						ReportAbnormal(
-							"problem with get_address_realblock1");
-					}
-					bankleft = RealSize;
-					goto label_1;
-				}
-			}
-		}
-	}
+            q = get_address_realblock1(WritableMem, addr);
+            if ((nullpr == q)
+                || (q->usebase != bankend))
+            {
+                /* following block not contiguous */
+                *actL = L - n;
+            } else {
+                RealSize = q->usemask + 1;
+                if (RealSize >= n) {
+                    /* following block is contiguous and big enough */
+                    *actL = L; /* ok */
+                } else {
+                    bankoffset = addr & q->usemask;
+                    if (bankoffset != 0) {
+                        ReportAbnormal(
+                            "problem with get_address_realblock1");
+                    }
+                    bankleft = RealSize;
+                    goto label_1;
+                }
+            }
+        }
+    }
 
-	return p;
+    return p;
 }
 
 GLOBALVAR blnr InterruptButton = falseblnr;
 
 GLOBALPROC SetInterruptButton(blnr v)
 {
-	if (InterruptButton != v) {
-		InterruptButton = v;
-		VIAorSCCinterruptChngNtfy();
-	}
+    if (InterruptButton != v) {
+        InterruptButton = v;
+        VIAorSCCinterruptChngNtfy();
+    }
 }
 
 LOCALVAR ui3b CurIPL = 0;
@@ -1598,58 +1598,58 @@ LOCALVAR ui3b CurIPL = 0;
 GLOBALPROC VIAorSCCinterruptChngNtfy(void)
 {
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
-	ui3b NewIPL;
+    ui3b NewIPL;
 
-	if (InterruptButton) {
-		NewIPL = 7;
-	} else if (SCCInterruptRequest) {
-		NewIPL = 4;
-	} else if (VIA2_InterruptRequest) {
-		NewIPL = 2;
-	} else if (VIA1_InterruptRequest) {
-		NewIPL = 1;
-	} else {
-		NewIPL = 0;
-	}
+    if (InterruptButton) {
+        NewIPL = 7;
+    } else if (SCCInterruptRequest) {
+        NewIPL = 4;
+    } else if (VIA2_InterruptRequest) {
+        NewIPL = 2;
+    } else if (VIA1_InterruptRequest) {
+        NewIPL = 1;
+    } else {
+        NewIPL = 0;
+    }
 #else
-	ui3b VIAandNotSCC = VIA1_InterruptRequest
-		& ~ SCCInterruptRequest;
-	ui3b NewIPL = VIAandNotSCC
-		| (SCCInterruptRequest << 1)
-		| (InterruptButton << 2);
+    ui3b VIAandNotSCC = VIA1_InterruptRequest
+        & ~ SCCInterruptRequest;
+    ui3b NewIPL = VIAandNotSCC
+        | (SCCInterruptRequest << 1)
+        | (InterruptButton << 2);
 #endif
-	if (NewIPL != CurIPL) {
-		CurIPL = NewIPL;
-		m68k_IPLchangeNtfy();
-	}
+    if (NewIPL != CurIPL) {
+        CurIPL = NewIPL;
+        m68k_IPLchangeNtfy();
+    }
 }
 
 GLOBALFUNC blnr AddrSpac_Init(void)
 {
-	int i;
+    int i;
 
-	for (i = 0; i < kNumWires; i++) {
-		Wires[i] = 1;
-	}
+    for (i = 0; i < kNumWires; i++) {
+        Wires[i] = 1;
+    }
 
-	MINEM68K_Init(
-		&CurIPL);
-	return trueblnr;
+    MINEM68K_Init(
+        &CurIPL);
+    return trueblnr;
 }
 
 GLOBALPROC Memory_Reset(void)
 {
-	MemOverlay = 1;
-	SetUpMemBanks();
+    MemOverlay = 1;
+    SetUpMemBanks();
 }
 
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
 EXPORTPROC PowerOff_ChangeNtfy(void);
 GLOBALPROC PowerOff_ChangeNtfy(void)
 {
-	if (! VIA2_iB2) {
-		ForceMacOff = trueblnr;
-	}
+    if (! VIA2_iB2) {
+        ForceMacOff = trueblnr;
+    }
 }
 #endif
 
@@ -1657,32 +1657,32 @@ GLOBALPROC PowerOff_ChangeNtfy(void)
 
 #if HaveMasterMyEvtQLock
 GLOBALVAR ui4r MasterMyEvtQLock = 0;
-	/*
-		Takes a few ticks to process button event because
-		of debounce code of Mac. So have this mechanism
-		to prevent processing further events meanwhile.
-	*/
+    /*
+        Takes a few ticks to process button event because
+        of debounce code of Mac. So have this mechanism
+        to prevent processing further events meanwhile.
+    */
 #endif
 
 GLOBALFUNC blnr FindKeyEvent(int *VirtualKey, blnr *KeyDown)
 {
-	MyEvtQEl *p;
+    MyEvtQEl *p;
 
-	if (
+    if (
 #if HaveMasterMyEvtQLock
-		(0 == MasterMyEvtQLock) &&
+        (0 == MasterMyEvtQLock) &&
 #endif
-		(nullpr != (p = MyEvtQOutP())))
-	{
-		if (MyEvtQElKindKey == p->kind) {
-			*VirtualKey = p->u.press.key;
-			*KeyDown = p->u.press.down;
-			MyEvtQOutDone();
-			return trueblnr;
-		}
-	}
+        (nullpr != (p = MyEvtQOutP())))
+    {
+        if (MyEvtQElKindKey == p->kind) {
+            *VirtualKey = p->u.press.key;
+            *KeyDown = p->u.press.down;
+            MyEvtQOutDone();
+            return trueblnr;
+        }
+    }
 
-	return falseblnr;
+    return falseblnr;
 }
 
 /* task management */
@@ -1696,35 +1696,35 @@ GLOBALVAR iCountt ICTwhen[kNumICTs];
 
 GLOBALPROC ICT_Zap(void)
 {
-	ICTactive = 0;
+    ICTactive = 0;
 }
 
 LOCALPROC InsertICT(int taskid, iCountt when)
 {
-	ICTwhen[taskid] = when;
-	ICTactive |= (1 << taskid);
+    ICTwhen[taskid] = when;
+    ICTactive |= (1 << taskid);
 }
 
 GLOBALVAR iCountt NextiCount = 0;
 
 GLOBALFUNC iCountt GetCuriCount(void)
 {
-	return NextiCount - GetCyclesRemaining();
+    return NextiCount - GetCyclesRemaining();
 }
 
 GLOBALPROC ICT_add(int taskid, ui5b n)
 {
-	/* n must be > 0 */
-	si5r x = GetCyclesRemaining();
-	ui5b when = NextiCount - x + n;
+    /* n must be > 0 */
+    si5r x = GetCyclesRemaining();
+    ui5b when = NextiCount - x + n;
 
 #ifdef _VIA_Debug
-	klog("ICT_add: %d, %d, %d\n", when, taskid, n);
+    klog("ICT_add: %d, %d, %d\n", when, taskid, n);
 #endif
-	InsertICT(taskid, when);
+    InsertICT(taskid, when);
 
-	if (x > (si5r)n) {
-		SetCyclesRemaining(n);
-		NextiCount = when;
-	}
+    if (x > (si5r)n) {
+        SetCyclesRemaining(n);
+        NextiCount = when;
+    }
 }
