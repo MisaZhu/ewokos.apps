@@ -31,10 +31,12 @@
 #include <dirent.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <ewoksys/klog.h>
 #include <ewoksys/cmain.h>
 #include <ewoksys/proc.h>
 #include <ewoksys/kernel_tic.h>
+#include <ewoksys/session.h>
 #include <ewoksys/timer.h>
 #include <ewoksys/keydef.h>
 #include <ewoksys/vfs.h>
@@ -502,28 +504,128 @@ static const char* get_res_name(const char* name) {
     return res_name;
 }
 
+static blnr ensure_dir_exists(const char* path) {
+    char tmp[512];
+    char* p;
+
+    if (NULL == path || path[0] == 0) {
+        return falseblnr;
+    }
+
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    for (p = tmp + 1; *p != 0; ++p) {
+        if (*p != '/') {
+            continue;
+        }
+        *p = 0;
+        if (access(tmp, F_OK) != 0 && mkdir(tmp, 0755) != 0) {
+            *p = '/';
+            return falseblnr;
+        }
+        *p = '/';
+    }
+
+    if (access(tmp, F_OK) != 0 && mkdir(tmp, 0755) != 0) {
+        return falseblnr;
+    }
+    return trueblnr;
+}
+
+static blnr copy_file_if_needed(const char* src_path, const char* dst_path) {
+    FILE* src;
+    FILE* dst;
+    char buffer[4096];
+    size_t nread;
+
+    if (access(dst_path, F_OK) == 0) {
+        return trueblnr;
+    }
+
+    src = fopen(src_path, "rb");
+    if (NULL == src) {
+        return falseblnr;
+    }
+
+    dst = fopen(dst_path, "wb");
+    if (NULL == dst) {
+        fclose(src);
+        return falseblnr;
+    }
+
+    while ((nread = fread(buffer, 1, sizeof(buffer), src)) > 0) {
+        if (fwrite(buffer, 1, nread, dst) != nread) {
+            fclose(dst);
+            fclose(src);
+            unlink(dst_path);
+            return falseblnr;
+        }
+    }
+
+    fclose(dst);
+    fclose(src);
+    return trueblnr;
+}
+
+static blnr get_user_disks_dir(char* path, size_t size) {
+    session_info_t sinfo;
+
+    if (NULL == path || size == 0) {
+        return falseblnr;
+    }
+
+    if (session_get_by_uid(getuid(), &sinfo) != 0 || sinfo.home[0] == 0) {
+        return falseblnr;
+    }
+
+    snprintf(path, size, "%s/docs/minivmac/disks", sinfo.home);
+    return trueblnr;
+}
+
+static blnr prepare_user_disk(const char* src_dir, const char* dst_dir,
+    const char* disk_name, char* out_path, size_t out_size)
+{
+    char src_path[512];
+
+    if (! ensure_dir_exists(dst_dir)) {
+        return falseblnr;
+    }
+
+    snprintf(src_path, sizeof(src_path), "%s/%s", src_dir, disk_name);
+    snprintf(out_path, out_size, "%s/%s", dst_dir, disk_name);
+
+    return copy_file_if_needed(src_path, out_path);
+}
+
 LOCALFUNC blnr LoadInitialImages(void)
 {
     if (! AnyDiskInserted()) {
-        char disks_dir[256] = {0};
+        char res_disks_dir[256] = {0};
+        char user_disks_dir[256] = {0};
         char disk_path[512] = {0};
         char** disk_names;
         size_t disk_count;
         size_t i;
         size_t limit;
 
-        snprintf(disks_dir, sizeof(disks_dir), "%s/res/disks",
+        snprintf(res_disks_dir, sizeof(res_disks_dir), "%s/res/disks",
             cmain_get_own_dir(NULL, 0));
 
-        disk_names = collect_disk_names(disks_dir, &disk_count);
+        disk_names = collect_disk_names(res_disks_dir, &disk_count);
         if (NULL == disk_names) {
+            return trueblnr;
+        }
+
+        if (! get_user_disks_dir(user_disks_dir, sizeof(user_disks_dir))) {
+            free_disk_names(disk_names, disk_count);
             return trueblnr;
         }
 
         limit = (disk_count < (size_t)NumDrives) ? disk_count : (size_t)NumDrives;
         for (i = 0; i < limit; ++i) {
-            snprintf(disk_path, sizeof(disk_path), "%s/%s",
-                disks_dir, disk_names[i]);
+            if (! prepare_user_disk(res_disks_dir, user_disks_dir,
+                    disk_names[i], disk_path, sizeof(disk_path))) {
+                continue;
+            }
             if (! Sony_Insert2(disk_path)) {
                 break;
             }
