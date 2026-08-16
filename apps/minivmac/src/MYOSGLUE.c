@@ -505,17 +505,17 @@ static const char* get_res_name(const char* name) {
 LOCALFUNC blnr LoadInitialImages(void)
 {
     if (! AnyDiskInserted()) {
-        char roms_dir[256] = {0};
+        char disks_dir[256] = {0};
         char disk_path[512] = {0};
         char** disk_names;
         size_t disk_count;
         size_t i;
         size_t limit;
 
-        snprintf(roms_dir, sizeof(roms_dir), "%s/res/roms",
+        snprintf(disks_dir, sizeof(disks_dir), "%s/res/disks",
             cmain_get_own_dir(NULL, 0));
 
-        disk_names = collect_disk_names(roms_dir, &disk_count);
+        disk_names = collect_disk_names(disks_dir, &disk_count);
         if (NULL == disk_names) {
             return trueblnr;
         }
@@ -523,7 +523,7 @@ LOCALFUNC blnr LoadInitialImages(void)
         limit = (disk_count < (size_t)NumDrives) ? disk_count : (size_t)NumDrives;
         for (i = 0; i < limit; ++i) {
             snprintf(disk_path, sizeof(disk_path), "%s/%s",
-                roms_dir, disk_names[i]);
+                disks_dir, disk_names[i]);
             if (! Sony_Insert2(disk_path)) {
                 break;
             }
