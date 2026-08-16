@@ -28,6 +28,8 @@
 #include "MYOSGLUE.h"
 
 #include "STRCONST.h"
+#include <dirent.h>
+#include <stdlib.h>
 #include <string.h>
 #include <ewoksys/klog.h>
 #include <ewoksys/cmain.h>
@@ -401,6 +403,99 @@ LOCALFUNC blnr Sony_Insert2(char *s)
     return Sony_Insert1(s, trueblnr);
 }
 
+static blnr has_dsk_suffix(const char* name) {
+    size_t len;
+
+    if (NULL == name) {
+        return falseblnr;
+    }
+
+    len = strlen(name);
+    if (len < 4) {
+        return falseblnr;
+    }
+
+    return strcmp(name + len - 4, ".dsk") == 0;
+}
+
+static int compare_disk_names(const void* a, const void* b) {
+    const char* const* sa = (const char* const*)a;
+    const char* const* sb = (const char* const*)b;
+    return strcmp(*sa, *sb);
+}
+
+static void free_disk_names(char** names, size_t count) {
+    size_t i;
+
+    if (NULL == names) {
+        return;
+    }
+
+    for (i = 0; i < count; ++i) {
+        free(names[i]);
+    }
+    free(names);
+}
+
+static char** collect_disk_names(const char* dir_path, size_t* out_count) {
+    DIR* dirp;
+    struct dirent* entry;
+    char** names = NULL;
+    size_t count = 0;
+    size_t capacity = 0;
+
+    *out_count = 0;
+
+    dirp = opendir(dir_path);
+    if (NULL == dirp) {
+        return NULL;
+    }
+
+    while ((entry = readdir(dirp)) != NULL) {
+        char* copy;
+        size_t len;
+        char** new_names;
+
+        if (strcmp(entry->d_name, ".") == 0 ||
+                strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        if (! has_dsk_suffix(entry->d_name)) {
+            continue;
+        }
+
+        if (count == capacity) {
+            capacity = (capacity == 0) ? 8 : (capacity * 2);
+            new_names = (char**)realloc(names, capacity * sizeof(char*));
+            if (NULL == new_names) {
+                free_disk_names(names, count);
+                closedir(dirp);
+                return NULL;
+            }
+            names = new_names;
+        }
+
+        len = strlen(entry->d_name) + 1;
+        copy = (char*)malloc(len);
+        if (NULL == copy) {
+            free_disk_names(names, count);
+            closedir(dirp);
+            return NULL;
+        }
+        memcpy(copy, entry->d_name, len);
+        names[count++] = copy;
+    }
+
+    closedir(dirp);
+
+    if (count > 1) {
+        qsort(names, count, sizeof(char*), compare_disk_names);
+    }
+
+    *out_count = count;
+    return names;
+}
+
 static const char* get_res_name(const char* name) {
     static char res_name[256] = {0};
     snprintf(res_name, sizeof(res_name), "%s/res/%s", cmain_get_own_dir(NULL, 0), name);
@@ -410,17 +505,31 @@ static const char* get_res_name(const char* name) {
 LOCALFUNC blnr LoadInitialImages(void)
 {
     if (! AnyDiskInserted()) {
-        int n = NumDrives > 9 ? 9 : NumDrives;
-        int i;
+        char roms_dir[256] = {0};
+        char disk_path[512] = {0};
+        char** disk_names;
+        size_t disk_count;
+        size_t i;
+        size_t limit;
 
-        for (i = 1; i <= n; ++i) {
-            char s[32] = {};
-            snprintf(s, 31, "roms/disk%d.dsk", i);
-            const char* disk = get_res_name(s);
-            if (! Sony_Insert2(disk)) {
-                return trueblnr;
+        snprintf(roms_dir, sizeof(roms_dir), "%s/res/roms",
+            cmain_get_own_dir(NULL, 0));
+
+        disk_names = collect_disk_names(roms_dir, &disk_count);
+        if (NULL == disk_names) {
+            return trueblnr;
+        }
+
+        limit = (disk_count < (size_t)NumDrives) ? disk_count : (size_t)NumDrives;
+        for (i = 0; i < limit; ++i) {
+            snprintf(disk_path, sizeof(disk_path), "%s/%s",
+                roms_dir, disk_names[i]);
+            if (! Sony_Insert2(disk_path)) {
+                break;
             }
         }
+
+        free_disk_names(disk_names, disk_count);
     }
 
     return trueblnr;
