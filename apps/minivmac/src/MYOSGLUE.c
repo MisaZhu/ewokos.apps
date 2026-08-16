@@ -29,9 +29,11 @@
 
 #include "STRCONST.h"
 #include <dirent.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <ewoksys/klog.h>
 #include <ewoksys/cmain.h>
 #include <ewoksys/proc.h>
@@ -279,6 +281,22 @@ LOCALPROC NativeStrFromCStr(char *r, char *s)
 
 LOCALVAR FILE *Drives[NumDrives]; /* open disk image files */
 
+LOCALFUNC size_t write_all_fd(int fd, const void *buffer, size_t count)
+{
+    size_t total = 0;
+
+    while (total < count) {
+        ssize_t nwritten = write(fd, (const char *)buffer + total,
+            count - total);
+        if (nwritten <= 0) {
+            break;
+        }
+        total += (size_t)nwritten;
+    }
+
+    return total;
+}
+
 LOCALPROC InitDrives(void)
 {
     tDrive i;
@@ -294,13 +312,18 @@ GLOBALFUNC tMacErr vSonyTransfer(blnr IsWrite, ui3p Buffer,
 {
     tMacErr err = mnvm_miscErr;
     FILE *refnum = Drives[Drive_No];
+    int fd = fileno(refnum);
     ui5r NewSony_Count = 0;
 
-    if (0 == fseek(refnum, Sony_Start, SEEK_SET)) {
+    if ((fd >= 0) && (lseek(fd, (off_t)Sony_Start, SEEK_SET) >= 0)) {
         if (IsWrite) {
-            NewSony_Count = fwrite(Buffer, 1, Sony_Count, refnum);
+            NewSony_Count = write_all_fd(fd, Buffer, (size_t)Sony_Count);
         } else {
-            NewSony_Count = fread(Buffer, 1, Sony_Count, refnum);
+            ssize_t nread = read(fd, Buffer, (size_t)Sony_Count);
+
+            if (nread > 0) {
+                NewSony_Count = (ui5r)nread;
+            }
         }
 
         if (NewSony_Count == Sony_Count) {
@@ -319,14 +342,17 @@ GLOBALFUNC tMacErr vSonyGetSize(tDrive Drive_No, ui5r *Sony_Count)
 {
     tMacErr err = mnvm_miscErr;
     FILE *refnum = Drives[Drive_No];
-    long v;
+    int fd = fileno(refnum);
+    off_t v;
 
-    if (0 == fseek(refnum, 0, SEEK_END)) {
-        v = ftell(refnum);
-        if (v >= 0) {
-            *Sony_Count = v;
-            err = mnvm_noErr;
-        }
+    if (fd < 0) {
+        return err;
+    }
+
+    v = lseek(fd, 0, SEEK_END);
+    if (v >= 0) {
+        *Sony_Count = (ui5r)v;
+        err = mnvm_noErr;
     }
 
     return err;
@@ -532,37 +558,51 @@ static blnr ensure_dir_exists(const char* path) {
 }
 
 static blnr copy_file_if_needed(const char* src_path, const char* dst_path) {
-    FILE* src;
-    FILE* dst;
-    char buffer[4096];
-    size_t nread;
+    int src_fd;
+    int dst_fd;
+    char buffer[1024*32];
+    ssize_t nread;
 
     if (access(dst_path, F_OK) == 0) {
         return trueblnr;
     }
 
-    src = fopen(src_path, "rb");
-    if (NULL == src) {
+    src_fd = open(src_path, O_RDONLY);
+    if (src_fd < 0) {
         return falseblnr;
     }
 
-    dst = fopen(dst_path, "wb");
-    if (NULL == dst) {
-        fclose(src);
+    dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (dst_fd < 0) {
+        close(src_fd);
         return falseblnr;
     }
 
-    while ((nread = fread(buffer, 1, sizeof(buffer), src)) > 0) {
-        if (fwrite(buffer, 1, nread, dst) != nread) {
-            fclose(dst);
-            fclose(src);
+    while ((nread = read(src_fd, buffer, sizeof(buffer))) > 0) {
+        if (write_all_fd(dst_fd, buffer, (size_t)nread) != (size_t)nread) {
+            close(dst_fd);
+            close(src_fd);
             unlink(dst_path);
             return falseblnr;
         }
     }
 
-    fclose(dst);
-    fclose(src);
+    if (nread < 0) {
+        close(dst_fd);
+        close(src_fd);
+        unlink(dst_path);
+        return falseblnr;
+    }
+
+    if (close(dst_fd) != 0) {
+        close(src_fd);
+        unlink(dst_path);
+        return falseblnr;
+    }
+    if (close(src_fd) != 0) {
+        unlink(dst_path);
+        return falseblnr;
+    }
     return trueblnr;
 }
 
