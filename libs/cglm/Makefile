@@ -15,7 +15,7 @@ TASK_DIR = $(TARGET_DIR)/bin
 TASK = cglmdemo
 
 $(TASK): $(TASK_OBJS) \
-		$(EWOK_LIBC_A)  
+		$(BUILD_DIR)/lib/libewoksys.a
 	mkdir -p $(TASK_DIR)
 	$(LD) -Ttext=100 $(TASK_OBJS) -o $(TASK_DIR)/$(TASK) $(LDFLAGS) $(EWOK_LIBC) -lm 
 	cp -r include/* $(BUILD_DIR)/include
