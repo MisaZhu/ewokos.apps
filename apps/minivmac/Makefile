@@ -41,11 +41,6 @@ $(TASK): $(TASK_OBJS) \
 		$(BUILD_DIR)/lib/libfont.a \
 		$(BUILD_DIR)/lib/libgraph.a \
 		$(BUILD_DIR)/lib/libwidget++.a \
-		$(BUILD_DIR)/lib/libSDL2_image.a \
-		$(BUILD_DIR)/lib/libSDL2_mixer.a \
-		$(BUILD_DIR)/lib/libSDL2_gfx.a \
-		$(BUILD_DIR)/lib/libSDL2_ttf.a \
-		$(BUILD_DIR)/lib/libSDL2.a \
 		$(BUILD_DIR)/lib/libvorbis.a \
 		$(BUILD_DIR)/lib/libogg.a \
 		$(BUILD_DIR)/lib/libcxx.a
