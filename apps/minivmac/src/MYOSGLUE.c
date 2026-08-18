@@ -42,6 +42,7 @@
 #include <ewoksys/timer.h>
 #include <ewoksys/keydef.h>
 #include <ewoksys/vfs.h>
+#include <pthread.h>
 
 #ifndef KEY_INSERT
 #define KEY_INSERT		0xF3
@@ -119,6 +120,17 @@ int window_height = 0;
 float display_scale = 1.0;
 int display_offset_x = 0;
 int display_offset_y = 0;
+
+/*
+    Frame hand-off between the emulation thread (producer) and the
+    GUI loop (consumer), same pattern as the emu app: the emulation
+    thread converts changed screen regions into screen_buffer under
+    frame_lock and raises frame_pending; the GUI loop repaints only
+    when a new frame is pending, so slow repaints never stall
+    emulation (and thus never stall sound sample production).
+*/
+LOCALVAR pthread_mutex_t frame_lock;
+LOCALVAR volatile blnr frame_pending = falseblnr;
 
 /* --- some simple utilities --- */
 
@@ -1579,7 +1591,7 @@ static int pcm_write(struct pcm *pcm, const void* data, unsigned int count) {
             pcm->prepared = 0;
             pcm->running = 0;
             if (pcm_prepare(pcm) != 0) {
-                proc_usleep(10000);
+                proc_usleep(100);
             }
             continue;
         }
@@ -1660,65 +1672,125 @@ static struct audio_thread_data {
 static pthread_t audio_thread_id = 0;
 
 /* Audio thread */
+
+/*
+    Fractional resampler step in Q16: input rate / output rate =
+    22254.54 / 44100 = 0.5046382 -> 33072. An exact-ratio resampler
+    (instead of plain 2x duplication) keeps consumption locked to
+    production, so the MySound_SecondNotify0 clock servo almost never
+    has to skip/insert whole ticks - each skipped tick is a 370-sample
+    phase jump, audible as a periodic click in sustained tones.
+*/
+#define kResampleStep 33072
+
 static void *audio_thread(void *arg)
 {
     struct audio_thread_data *data = (struct audio_thread_data *)arg;
     struct pcm *pcm = data->pcm;
     unsigned char *buffer = NULL;
+    ui5b phase = 0; /* Q16 position within the input ring, relative to ThePlayOffset */
+    int16_t last_v = 0; /* last output level, held during underrun padding */
 
     if (!pcm) {
         return NULL;
     }
 
-    buffer = (unsigned char *)malloc(kOneBuffLen * 2 * 4); /* stereo 16-bit, up to 2 buffers */
+    /* one full device period per write, stereo 16-bit */
+    buffer = (unsigned char *)malloc((size_t)pcm->config.period_size * 4);
     if (!buffer) {
         return NULL;
     }
 
-    /* wait until the ring holds the target reserve, then start playback */
+    /*
+        Build the startup reserve before playing: the first writes fill
+        the device queue (period_count periods) without blocking, which
+        migrates ~4 ring buffers out of the ring. Waiting for target+4
+        leaves the ring sitting right at DesiredMinFilledSoundBuffs
+        once the device queue is primed.
+    */
     while (data->enabled &&
         (ui4b)(TheFillOffset - ThePlayOffset) <
-            (ui4b)(DesiredMinFilledSoundBuffs << kLnOneBuffLen)) {
-        proc_usleep(5000);
+            (ui4b)((DesiredMinFilledSoundBuffs + 4) << kLnOneBuffLen)) {
+        proc_usleep(100);
     }
 
     while (data->enabled) {
         /* wrap-safe filled sample count (offsets are ui4b counters) */
         ui4b filled = (ui4b)(TheFillOffset - ThePlayOffset);
-        int play_len;
+        int period_frames = pcm->config.period_size;
+        int in_avail;
+        int gen_frames;
+        int out_frames;
         int wr;
-        int i;
 
-        if (!HaveStartedPlaying || filled == 0) {
-            proc_usleep(2000);
+        if (!HaveStartedPlaying) {
+            proc_usleep(6000);
             continue;
         }
 
-        /* feed up to 2 buffers per write: fewer IPC round trips while
-           staying within the device's 4KB software-volume path */
-        play_len = filled;
-        if (play_len > kOneBuffLen * 2) {
-            play_len = kOneBuffLen * 2;
+        /* up to 2 ring buffers of input per period: a full 1024-frame
+           period needs ~517 input samples plus 1 lookahead sample */
+        in_avail = filled;
+        if (in_avail > (int)(kOneBuffLen * 2)) {
+            in_avail = kOneBuffLen * 2;
         }
 
-        /* Convert 8-bit mono to 16-bit stereo */
-        for (i = 0; i < play_len; i++) {
-            int sample = TheSoundBuffer[(ThePlayOffset + i) & kAllBuffMask];
-            /* Convert 8-bit to 16-bit */
-            sample = (sample - 128) * 256;
-            /* Write to both channels */
-            ((int16_t *)buffer)[i * 2] = sample;
-            ((int16_t *)buffer)[i * 2 + 1] = sample;
+        out_frames = 0;
+        while (out_frames < period_frames) {
+            int ipart = (int)(phase >> 16);
+            int s0, s1, s;
+
+            if (ipart >= in_avail - 1) {
+                break;
+            }
+
+            s0 = TheSoundBuffer[(ThePlayOffset + ipart) & kAllBuffMask];
+            s1 = TheSoundBuffer[(ThePlayOffset + ipart + 1) & kAllBuffMask];
+            s = s0 + (((s1 - s0) * (int)(phase & 0xffff)) >> 16);
+            last_v = (int16_t)((s - 128) * 256);
+
+            ((int16_t *)buffer)[out_frames * 2] = last_v;
+            ((int16_t *)buffer)[out_frames * 2 + 1] = last_v;
+            out_frames++;
+            phase += kResampleStep;
+        }
+        gen_frames = out_frames;
+
+        /*
+            Always emit a full period: when the ring runs short, hold
+            the last sample level instead of skipping the write. The
+            device never starves (an XRUN restarts the stream - a loud
+            glitch), and held frames consume no ring samples, so the
+            ring refills while padding plays.
+        */
+        while (out_frames < period_frames) {
+            ((int16_t *)buffer)[out_frames * 2] = last_v;
+            ((int16_t *)buffer)[out_frames * 2 + 1] = last_v;
+            out_frames++;
         }
 
         /* blocks on the device clock, pacing this thread; returns the
            number of bytes actually accepted */
-        wr = pcm_write(pcm, buffer, play_len * 4);
-        if (wr > 0) {
-            /* advance only by frames the device accepted, so a stalled
-               or failed write keeps data in the ring instead of
-               dropping it (drops show up as clicks) */
-            ThePlayOffset += (ui4b)(wr >> 2);
+        wr = pcm_write(pcm, buffer, period_frames * 4);
+        {
+            int accepted = (wr > 0) ? (wr >> 2) : 0;
+
+            if (accepted < gen_frames) {
+                /* stalled/failed write: rewind phase so unaccepted
+                   frames are regenerated instead of dropped */
+                phase -= (ui5b)(gen_frames - accepted) * kResampleStep;
+            }
+
+            /* advance the ring by whole input samples consumed and
+               keep only the fractional part in phase */
+            ThePlayOffset += (ui4b)(phase >> 16);
+            phase &= 0xffff;
+
+            if (accepted == 0) {
+                /* device error path: back off one period instead of
+                   hammering the driver with re-prepare requests */
+                proc_usleep(period_frames * 1000000 / SOUND_SAMPLERATE);
+            }
         }
     }
 
@@ -1957,16 +2029,9 @@ static void on_xwin_repaint(xwin_t* win, graph_t* g) {
     graph_fill_rect(g, 0, 0, g->w, g->h, 0xff000000);
 
     if (screen_buffer != NULL && screen_buffer->buffer != NULL) {
-        ScreenChangedTop = 0;
-        ScreenChangedLeft = 0;
-        ScreenChangedBottom = vMacScreenHeight;
-        ScreenChangedRight = vMacScreenWidth;
-
-        if (ScreenChangedBottom > ScreenChangedTop) {
-            HaveChangedScreenBuff(ScreenChangedTop, ScreenChangedLeft,
-                ScreenChangedBottom, ScreenChangedRight);
-            ScreenClearChanges();
-        }
+        /* screen_buffer is filled by the emulation thread; hold
+           frame_lock so a repaint never overlaps a conversion */
+        pthread_mutex_lock(&frame_lock);
 
         float scale_x = (float)g->w / screen_buffer->w;
         float scale_y = (float)g->h / screen_buffer->h;
@@ -1997,6 +2062,8 @@ static void on_xwin_repaint(xwin_t* win, graph_t* g) {
                     g, 0, 0, screen_buffer->w, screen_buffer->h);
             }
         }
+
+        pthread_mutex_unlock(&frame_lock);
     }
 }
 
@@ -2016,14 +2083,20 @@ static void xwin_loop(void* p) {
 
     CheckForSavedTasks();
 
-    if (!CurSpeedStopped) {
-        RunEmulatedTicksToTrueTime();
-
-        DoEmulateOneTick();
-        ++CurEmulatedTime;
+    /*
+        GUI work only: emulation (and thus sound generation) runs in
+        its own thread; here we just push the latest published frame
+        to the xserver. A slow repaint can no longer delay ticks.
+    */
+    blnr do_repaint = falseblnr;
+    pthread_mutex_lock(&frame_lock);
+    if (frame_pending) {
+        frame_pending = falseblnr;
+        do_repaint = trueblnr;
     }
+    pthread_mutex_unlock(&frame_lock);
 
-    if (xwin != NULL) {
+    if (do_repaint && xwin != NULL) {
         xwin_repaint(xwin);
     }
 
@@ -2299,7 +2372,8 @@ LOCALPROC CheckForSavedTasks(void)
         ScreenChangedAll();
     }
 
-    MyDrawChangesAndClear();
+    /* screen conversion is done by the emulation thread
+       (PublishFrameChanges), not here */
 
     if (HaveCursorHidden != (WantCursorHidden
         && ! (gTrueBackgroundFlag || CurSpeedStopped)))
@@ -2336,8 +2410,6 @@ LOCALPROC RunEmulatedTicksToTrueTime(void)
         DoEmulateOneTick();
         ++CurEmulatedTime;
 
-        MyDrawChangesAndClear();
-
         if (n > 8) {
             n = 8;
             CurEmulatedTime = OnTrueTime - n;
@@ -2363,6 +2435,88 @@ LOCALPROC RunOnEndOfSixtieth(void)
 {
     OnTrueTime = TrueEmulatedTime;
     RunEmulatedTicksToTrueTime();
+}
+
+/* --- emulation thread --- */
+
+/*
+    Like the emu app's emuLoop: DoEmulateOneTick is paced by real
+    time on a dedicated thread, fully decoupled from GUI repaint.
+    The emulated Mac produces sound samples every tick, so keeping
+    ticks on schedule is what keeps the sound ring fed; repaint cost
+    (screen scaling + xserver IPC) can no longer starve it.
+*/
+
+LOCALVAR pthread_t emu_thread_id = 0;
+LOCALVAR volatile blnr emu_thread_running = falseblnr;
+
+LOCALPROC PublishFrameChanges(void)
+{
+    if (ScreenChangedBottom > ScreenChangedTop) {
+        /* never block the tick on GUI work: if the GUI thread is busy
+           scaling/blitting under frame_lock, keep the dirty region and
+           publish on a later tick; sound production must not stall */
+        if (pthread_mutex_trylock(&frame_lock) == 0) {
+            MyDrawChangesAndClear();
+            frame_pending = trueblnr;
+            pthread_mutex_unlock(&frame_lock);
+        }
+    }
+}
+
+LOCALFUNC void *emu_thread_entry(void *arg)
+{
+    (void)arg;
+
+    while (emu_thread_running) {
+        if (ForceMacOff || CurSpeedStopped) {
+            /* still publish control-mode/message screen changes */
+            PublishFrameChanges();
+            proc_usleep(16000);
+            continue;
+        }
+
+        UpdateTrueEmulatedTime();
+        RunOnEndOfSixtieth();
+        PublishFrameChanges();
+
+        /* sleep until the next 60.15Hz tick boundary */
+        {
+            uint32_t low;
+            si5b wait_ms;
+
+            kernel_tic32(NULL, NULL, &low);
+            wait_ms = (si5b)(NextIntTime - (low / 1000));
+            if (wait_ms > 0) {
+                if (wait_ms > 20) {
+                    wait_ms = 20;
+                }
+                proc_usleep(wait_ms * 1000);
+            } else {
+                proc_yield();
+            }
+        }
+    }
+
+    return NULL;
+}
+
+LOCALPROC StartEmuThread(void)
+{
+    emu_thread_running = trueblnr;
+    if (pthread_create(&emu_thread_id, NULL, emu_thread_entry, NULL) != 0) {
+        emu_thread_running = falseblnr;
+        emu_thread_id = 0;
+    }
+}
+
+LOCALPROC StopEmuThread(void)
+{
+    if (emu_thread_running) {
+        emu_thread_running = falseblnr;
+        pthread_join(emu_thread_id, NULL);
+        emu_thread_id = 0;
+    }
 }
 
 LOCALPROC ZapOSGLUVars(void)
@@ -2501,10 +2655,14 @@ int main(int argc, char **argv)
     my_argc = argc;
     my_argv = argv;
 
+    pthread_mutex_init(&frame_lock, NULL);
+
     ZapOSGLUVars();
     if (InitOSGLU()) {
         LeaveSpeedStopped();
+        StartEmuThread();
         x_run(x_context, xwin);
+        StopEmuThread();
     }
     UnInitOSGLU();
 
