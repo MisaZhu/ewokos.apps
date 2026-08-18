@@ -1,0 +1,8 @@
+ramsize 16777216
+cpu 4
+fpu false
+nocdrom true
+frameskip 2
+screen win/640/480/8
+modelid 5
+nosound true

@@ -2,6 +2,15 @@ ifeq ($(ewokos),)
 export ewokos= ~/work/ewokos
 endif
 
+ifeq ($(ARCH),)
+export ARCH=aarch64
+endif
+
+ifeq ($(HW),)
+export HW=virt
+endif
+
+
 EWOKOS_ROOT_DIR = $(ewokos)
 SYS_DIR = $(EWOKOS_ROOT_DIR)/system
 
