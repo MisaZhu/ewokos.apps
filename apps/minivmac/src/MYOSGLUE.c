@@ -1328,7 +1328,13 @@ LOCALFUNC blnr InitLocationDat(void)
 #define kSoundBuffers (1 << kLn2SoundBuffers)
 #define kSoundBuffMask (kSoundBuffers - 1)
 
-#define DesiredMinFilledSoundBuffs 3
+/*
+    Keep the ring half full: sound samples are only produced in
+    60Hz emulation ticks, so a deep reserve decouples playback from
+    frame cadence jitter (heavy frames, scheduler delays, catch-up
+    bursts). 8 of 16 buffers leaves equal room in both directions.
+*/
+#define DesiredMinFilledSoundBuffs 8
 
 #define kLnOneBuffLen 9
 #define kLnAllBuffLen (kLn2SoundBuffers + kLnOneBuffLen)
@@ -1346,14 +1352,12 @@ LOCALVAR tpSoundSamp TheSoundBuffer = nullpr;
 LOCALVAR ui4b ThePlayOffset;
 LOCALVAR ui4b TheFillOffset;
 LOCALVAR ui4b TheWriteOffset;
-LOCALVAR ui4b MinFilledSoundBuffs;
 
 LOCALPROC MySound_Start0(void)
 {
     ThePlayOffset = 0;
     TheFillOffset = 0;
     TheWriteOffset = 0;
-    MinFilledSoundBuffs = kSoundBuffers + 1;
 }
 
 GLOBALFUNC tpSoundSamp MySound_BeginWrite(ui4r n, ui4r *actL)
@@ -1389,15 +1393,24 @@ LOCALFUNC blnr MySound_EndWrite0(ui4r actL)
     return v;
 }
 
+/*
+    Clock servo: once per second, nudge the emulated clock so the
+    sound ring stays near DesiredMinFilledSoundBuffs. This keeps the
+    ring away from both underrun and overflow under long term drift
+    (max one tick per second, so video cadence is unaffected).
+*/
 LOCALPROC MySound_SecondNotify0(void)
 {
-    if (MinFilledSoundBuffs <= kSoundBuffers) {
-        if (MinFilledSoundBuffs > DesiredMinFilledSoundBuffs) {
+    /* wrap-safe filled length (offsets are ui4b counters) */
+    ui4b FilledBuffs =
+        (ui4b)(TheFillOffset - ThePlayOffset) >> kLnOneBuffLen;
+
+    if (FilledBuffs <= kSoundBuffers) {
+        if (FilledBuffs > DesiredMinFilledSoundBuffs) {
             ++CurEmulatedTime;
-        } else if (MinFilledSoundBuffs < DesiredMinFilledSoundBuffs) {
+        } else if (FilledBuffs < DesiredMinFilledSoundBuffs) {
             --CurEmulatedTime;
         }
-        MinFilledSoundBuffs = kSoundBuffers + 1;
     }
 }
 
@@ -1416,7 +1429,6 @@ LOCALVAR blnr HaveStartedPlaying = falseblnr;
 #define CTRL_PCM_DEV_HW				(0xF0)
 #define CTRL_PCM_DEV_HW_FREE		(0xF1)
 #define CTRL_PCM_DEV_PRPARE			(0xF2)
-#define CTRL_PCM_BUF_AVAIL			(0xF3)
 
 #define	EPIPE					(32)
 
@@ -1438,23 +1450,6 @@ struct pcm {
     int framesize;
     struct pcm_config config;
 };
-
-static int pcm_buf_avail(struct pcm *pcm)
-{
-    proto_t in, out;
-    PF->init(&in);
-    PF->init(&out);
-    int ret = 0;
-
-    ret = dev_cntl(pcm->name, CTRL_PCM_BUF_AVAIL, &in, &out);
-    if(ret == 0) {
-        ret = proto_read_int(&out);
-    } 
-
-    PF->clear(&in);
-    PF->clear(&out);
-    return ret;
-}
 
 static int support_rate(unsigned int rate) {
     switch (rate) {
@@ -1535,6 +1530,12 @@ static int pcm_try_write(struct pcm *pcm, const void* data, unsigned int count)
 {
     if (count == 0) return 0;
 
+    /*
+     * Returns bytes actually written (>= 0) or a negative errno. The
+     * driver uses partial-write semantics: an XRUN mid-write returns
+     * the bytes consumed so far, so the caller must advance by the
+     * returned count instead of treating a short write as an error.
+     */
     if (pcm->running == 0) {
         int err = pcm_prepare(pcm);
         if (err != 0) {
@@ -1542,78 +1543,59 @@ static int pcm_try_write(struct pcm *pcm, const void* data, unsigned int count)
         }
 
         int written = write(pcm->fd, data, count);
-        if (written != (int)count) {
-            return -1;
+        if (written > 0) {
+            pcm->running = 1;
         }
-        pcm->running = 1;
-        return 0;
+        return written;
     }
 
-    int ret = write(pcm->fd, data, count);
-    return (ret == (int)count ? 0 : -1);
-}
-
-static int wait_avail(struct pcm *pcm, int *avail, int time_out_ms)
-{
-    enum { SLEEP_TIME_MS = 5 };
-    *avail = 0;
-    int ret = 0;
-    int period_bytes = pcm->config.period_size * 4;
-    int max_try_count = time_out_ms / SLEEP_TIME_MS;
-    int try_count = 0;
-
-    for(;;) {
-        ret = pcm_buf_avail(pcm);
-        if (ret < 0) {
-            *avail = period_bytes;
-            return 0;
-        }
-
-        if (ret >= period_bytes) {
-            *avail = ret;
-            break;
-        }
-
-        if(try_count++ >= max_try_count) {
-            *avail = ret;
-            break;
-        }
-
-        proc_usleep(SLEEP_TIME_MS * 1000);
-    }
-
-    return ret;
+    return write(pcm->fd, data, count);
 }
 
 static int pcm_write(struct pcm *pcm, const void* data, unsigned int count) {
     if (count == 0) return 0;
 
     int period_bytes = pcm->config.period_size * 4; // 16-bit stereo = 4 bytes per frame
-    int avail = 0;
     int bytes = (int)count;
     int written = 0;
     int offset = 0;
-    int copy_bytes = 0;
-    int ret = 0;
+    int xrun_retry = 0;
 
-    copy_bytes = bytes < period_bytes ? bytes : period_bytes;
+    /*
+     * No avail polling here: when the driver ring is full, write()
+     * blocks inside vfsd (VFS_EVT_WR) and really sleeps until the
+     * playback loop drains a period, so this loop only advances on
+     * real progress or runs the XRUN recovery path. Blocking on the
+     * device clock is what paces this thread, free of poll jitter.
+     */
     while (bytes > 0) {
-        ret = wait_avail(pcm, &avail, 2000); // Wait up to 2 seconds
-        if (ret < 0 || (avail == 0 && bytes > 0)) {
+        int copy_bytes = bytes < period_bytes ? bytes : period_bytes;
+        int ret = pcm_try_write(pcm, (const char*)data + offset, copy_bytes);
+        if (ret == -EPIPE) {
+            /* XRUN: re-prepare then restart from the 1st-write path */
+            if (xrun_retry++ >= 5) {
+                break;
+            }
+            pcm->prepared = 0;
+            pcm->running = 0;
+            if (pcm_prepare(pcm) != 0) {
+                proc_usleep(10000);
+            }
+            continue;
+        }
+        if (ret <= 0) {
+            if (ret < 0) break;
+            /* ret == 0 without error: no progress, avoid spinning */
             break;
         }
-        copy_bytes = bytes < avail ? bytes : avail;
-
-        ret = pcm_try_write(pcm, (const char*)data + offset, copy_bytes);
-        if (ret == 0) {
-            offset += copy_bytes;
-            written += copy_bytes;
-            bytes -= copy_bytes;
-            copy_bytes = bytes < period_bytes ? bytes : period_bytes;
-        }
+        xrun_retry = 0;
+        offset += ret;
+        written += ret;
+        bytes -= ret;
     }
 
-    return (written == (int)count ? 0 : -1);
+    /* bytes actually accepted by the device (may be < count) */
+    return written;
 }
 
 static struct pcm* pcm_open(const char *name, struct pcm_config *config)
@@ -1682,48 +1664,61 @@ static void *audio_thread(void *arg)
 {
     struct audio_thread_data *data = (struct audio_thread_data *)arg;
     struct pcm *pcm = data->pcm;
-    int buffer_size = kOneBuffLen * 4; /* 2 channels * 2 bytes per sample */
     unsigned char *buffer = NULL;
 
     if (!pcm) {
         return NULL;
     }
 
-    /* Allocate buffer */
-    buffer = (unsigned char *)malloc(buffer_size);
+    buffer = (unsigned char *)malloc(kOneBuffLen * 2 * 4); /* stereo 16-bit, up to 2 buffers */
     if (!buffer) {
         return NULL;
     }
 
-    /* Initial delay */
-    proc_usleep(200 * 1000);
+    /* wait until the ring holds the target reserve, then start playback */
+    while (data->enabled &&
+        (ui4b)(TheFillOffset - ThePlayOffset) <
+            (ui4b)(DesiredMinFilledSoundBuffs << kLnOneBuffLen)) {
+        proc_usleep(5000);
+    }
 
     while (data->enabled) {
-        /* Check if there's data to play */
-        if (TheFillOffset > ThePlayOffset) {
-            int play_len = TheFillOffset - ThePlayOffset;
-            if (play_len > kOneBuffLen) {
-                play_len = kOneBuffLen;
-            }
+        /* wrap-safe filled sample count (offsets are ui4b counters) */
+        ui4b filled = (ui4b)(TheFillOffset - ThePlayOffset);
+        int play_len;
+        int wr;
+        int i;
 
-            /* Convert 8-bit mono to 16-bit stereo */
-            for (int i = 0; i < play_len; i++) {
-                int sample = TheSoundBuffer[(ThePlayOffset + i) & kAllBuffMask];
-                /* Convert 8-bit to 16-bit */
-                sample = (sample - 128) * 256;
-                /* Write to both channels */
-                ((int16_t *)buffer)[i * 2] = sample;
-                ((int16_t *)buffer)[i * 2 + 1] = sample;
-            }
+        if (!HaveStartedPlaying || filled == 0) {
+            proc_usleep(2000);
+            continue;
+        }
 
-            /* Write to PCM device using pcm_write (like emu does) */
-            int res = pcm_write(pcm, buffer, play_len * 4);
+        /* feed up to 2 buffers per write: fewer IPC round trips while
+           staying within the device's 4KB software-volume path */
+        play_len = filled;
+        if (play_len > kOneBuffLen * 2) {
+            play_len = kOneBuffLen * 2;
+        }
 
-            /* Update play offset - always advance to keep buffer flowing */
-            ThePlayOffset += play_len;
-        } else {
-            /* No data to play, sleep briefly */
-            proc_usleep(10000);
+        /* Convert 8-bit mono to 16-bit stereo */
+        for (i = 0; i < play_len; i++) {
+            int sample = TheSoundBuffer[(ThePlayOffset + i) & kAllBuffMask];
+            /* Convert 8-bit to 16-bit */
+            sample = (sample - 128) * 256;
+            /* Write to both channels */
+            ((int16_t *)buffer)[i * 2] = sample;
+            ((int16_t *)buffer)[i * 2 + 1] = sample;
+        }
+
+        /* blocks on the device clock, pacing this thread; returns the
+           number of bytes actually accepted */
+        wr = pcm_write(pcm, buffer, play_len * 4);
+        if (wr > 0) {
+            /* advance only by frames the device accepted, so a stalled
+               or failed write keeps data in the ring instead of
+               dropping it (drops show up as clicks) */
+            ThePlayOffset += (ui4b)(wr >> 2);
         }
     }
 
