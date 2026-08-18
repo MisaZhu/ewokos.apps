@@ -53,6 +53,15 @@ $(TASK): $(TASK_OBJS) \
 	$(LD) -Ttext=100 $(TASK_OBJS) -o $(TASK_DIR)/$(TASK) $(LDFLAGS) $(EWOK_LIB_X) $(EWOK_LIB_GRAPH) $(EWOK_LIBC) -lcxx
 	cp -r res $(TASK_DIR)
 
+# the 68K interpreter is the emulation hot path: compile it hotter
+$(ARCH)/src/MINEM68K.o: src/MINEM68K.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -O3 -c $< -o $@
+
+$(ARCH)/src/M68KITAB.o: src/M68KITAB.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -O3 -c $< -o $@
+
 $(ARCH)/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
