@@ -210,26 +210,8 @@ uae_u32 REGPARAM2 ram24_bget(uaecptr addr)
 	return (uae_u32)*(uae_u8 *)(RAMBaseDiff + (addr & 0xffffff));
 }
 
-// Diagnostic: catch writes into low RAM (vector table + globals) that
-// carry the gray-dither byte pattern; print the guest PC of the writer.
-extern uint32 GuestPC(void);
-extern volatile uint32 b2_emul_count;
-static void lowram_write_check(uaecptr addr, uae_u32 val, int width)
-{
-	static int printed = 0;
-	addr &= 0xffffff;
-	if (addr < 0x1000 && (val & 0xff) == 0xff && b2_emul_count >= 500 && printed < 16) {
-		printed++;
-		printf("lowram: %d-bit write addr=%06x val=%08x pc=%08x ops=%u\n",
-		       width, (unsigned)addr, (unsigned)val, (unsigned)GuestPC(),
-		       (unsigned)b2_emul_count);
-		fflush(stdout);
-	}
-}
-
 void REGPARAM2 ram24_lput(uaecptr addr, uae_u32 l)
 {
-	lowram_write_check(addr, l, 32);
 	uae_u32 *m;
 	m = (uae_u32 *)(RAMBaseDiff + (addr & 0xffffff));
 	do_put_mem_long(m, l);
@@ -237,7 +219,6 @@ void REGPARAM2 ram24_lput(uaecptr addr, uae_u32 l)
 
 void REGPARAM2 ram24_wput(uaecptr addr, uae_u32 w)
 {
-	lowram_write_check(addr, w, 16);
 	uae_u16 *m;
 	m = (uae_u16 *)(RAMBaseDiff + (addr & 0xffffff));
 	do_put_mem_word(m, w);
@@ -245,7 +226,6 @@ void REGPARAM2 ram24_wput(uaecptr addr, uae_u32 w)
 
 void REGPARAM2 ram24_bput(uaecptr addr, uae_u32 b)
 {
-	lowram_write_check(addr, b, 8);
 	*(uae_u8 *)(RAMBaseDiff + (addr & 0xffffff)) = b;
 }
 

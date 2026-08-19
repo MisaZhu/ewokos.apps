@@ -1189,63 +1189,6 @@ static void one_tick(...)
 		one_second();
 	}
 
-	// Boot/stall heartbeat: guest PC, interrupt state and low-memory
-	// sanity words every 5s (vec4 catches framebuffer-over-low-RAM
-	// corruption: the gray dither pattern shows up as 0xff00ff00-ish)
-	{
-		extern uint32 GuestPC(void);
-		extern uint32 GuestSR(void);
-		extern uint32 GuestTicks(void);
-		extern volatile uint32 b2_scsi_count;
-		extern volatile uint32 b2_emul_count;
-		extern volatile uint16 b2_last_op;
-
-		// Watch low-memory words; report every change so the corrupting
-		// moment is pinned to the emul-op count/phase
-		static uint32 w_v4, w_sb, w_cb, w_ticks;
-		static bool w_init = false;
-		uint32 v4 = ReadMacInt32(0x10), sb = ReadMacInt32(0x824),
-		       cb = ReadMacInt32(0x898), tk = ReadMacInt32(0x16a);
-		if (!w_init) { w_init = true; w_v4 = v4; w_sb = sb; w_cb = cb; w_ticks = tk; }
-		if (v4 != w_v4) {
-			printf("watch: v4 %08x->%08x ops=%u last=%04x pc=%08x\n",
-			       (unsigned)w_v4, (unsigned)v4, (unsigned)b2_emul_count,
-			       (unsigned)b2_last_op, (unsigned)GuestPC());
-			w_v4 = v4;
-		}
-		if (sb != w_sb) {
-			printf("watch: ScrnBase %08x->%08x ops=%u last=%04x pc=%08x\n",
-			       (unsigned)w_sb, (unsigned)sb, (unsigned)b2_emul_count,
-			       (unsigned)b2_last_op, (unsigned)GuestPC());
-			w_sb = sb;
-		}
-		if (cb != w_cb) {
-			printf("watch: CrsrBase %08x->%08x ops=%u last=%04x pc=%08x\n",
-			       (unsigned)w_cb, (unsigned)cb, (unsigned)b2_emul_count,
-			       (unsigned)b2_last_op, (unsigned)GuestPC());
-			w_cb = cb;
-		}
-		if (tk != w_ticks && (tk < w_ticks || tk > w_ticks + 4)) {
-			printf("watch: Ticks %08x->%08x ops=%u last=%04x pc=%08x\n",
-			       (unsigned)w_ticks, (unsigned)tk, (unsigned)b2_emul_count,
-			       (unsigned)b2_last_op, (unsigned)GuestPC());
-		}
-		w_ticks = tk;
-		fflush(stdout);
-
-		static int hb_counter = 0;
-		if (++hb_counter >= 30) {
-			hb_counter = 0;
-			printf("hb: pc=%08x sr=%04x flg=%x ticks=%u v4=%08x scsi=%u ops=%u last=%04x\n",
-			       (unsigned)GuestPC(), (unsigned)GuestSR(),
-			       (unsigned)InterruptFlags, (unsigned)GuestTicks(),
-			       (unsigned)ReadMacInt32(0x10),
-			       (unsigned)b2_scsi_count, (unsigned)b2_emul_count,
-			       (unsigned)b2_last_op);
-			fflush(stdout);
-		}
-	}
-
 #ifndef USE_PTHREADS_SERVICES
 	// Threads not used to trigger interrupts, perform video refresh from here
 	VideoRefresh();

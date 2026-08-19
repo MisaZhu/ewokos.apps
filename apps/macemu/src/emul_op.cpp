@@ -49,37 +49,12 @@
 #define DEBUG 0
 #include "debug.h"
 
-// Boot diagnostics: SCSI dispatch count (heartbeat in main_unix.cpp).
-// Volatile: read cross-thread by the tick-thread heartbeat.
-volatile uint32 b2_scsi_count = 0;
-volatile uint32 b2_emul_count = 0;
-volatile uint16 b2_last_op = 0;
-
-
 /*
  *  Execute EMUL_OP opcode (called by 68k emulator or Illegal Instruction trap handler)
  */
 
 void EmulOp(uint16 opcode, M68kRegisters *r)
 {
-	// Boot diagnostics: track service usage; print each distinct opcode once
-	uint32 op_seq = ++b2_emul_count;
-	b2_last_op = opcode;
-	{
-		static uint16 seen[64];
-		static int n_seen = 0;
-		bool first = true;
-		for (int i = 0; i < n_seen; i++)
-			if (seen[i] == opcode) { first = false; break; }
-		if (first) {
-			if (n_seen < 64)
-				seen[n_seen++] = opcode;
-			printf("op:%04x\n", opcode);
-		}
-	}
-	// Full trace of the ops leading up to the low-RAM clobber
-	if (op_seq >= 540 && op_seq <= 640)
-		printf("op:%04x #%u\n", opcode, (unsigned)op_seq);
 	D(bug("EmulOp %04x\n", opcode));
 	switch (opcode) {
 		case M68K_EMUL_BREAK: {				// Breakpoint
@@ -416,11 +391,6 @@ void EmulOp(uint16 opcode, M68kRegisters *r)
 			break;
 
 		case M68K_EMUL_OP_SCSI_DISPATCH: {	// SCSIDispatch() replacement
-			{
-				static bool seen = false;
-				if (!seen) { seen = true; printf("boot: first SCSI op\n"); }
-			}
-			b2_scsi_count++;
 			uint32 ret = ReadMacInt32(r->a[7]);		// Get return address
 			uint16 sel = ReadMacInt16(r->a[7] + 4);	// Get selector
 			r->a[7] += 6;

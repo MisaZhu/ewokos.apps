@@ -160,25 +160,6 @@ void TriggerInterrupt(void)
 	SPCFLAGS_SET( SPCFLAG_INT );
 }
 
-/*
- *  Current guest PC (diagnostic heartbeat)
- */
-
-uint32 GuestPC(void)
-{
-	return m68k_getpc();
-}
-
-uint32 GuestSR(void)
-{
-	return regs.sr;
-}
-
-uint32 GuestTicks(void)
-{
-	return ReadMacInt32(0x16a);
-}
-
 void TriggerNMI(void)
 {
 	//!! not implemented yet
