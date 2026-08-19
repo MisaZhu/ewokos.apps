@@ -569,11 +569,17 @@ static blnr ensure_dir_exists(const char* path) {
     return trueblnr;
 }
 
-static blnr copy_file_if_needed(const char* src_path, const char* dst_path) {
+typedef void (*copy_progress_proc)(off_t done, off_t file_size, void* arg);
+
+static blnr copy_file_if_needed(const char* src_path, const char* dst_path,
+    copy_progress_proc progress, void* arg) {
     int src_fd;
     int dst_fd;
     char buffer[1024*32];
     ssize_t nread;
+    off_t file_size = 0;
+    off_t done = 0;
+    struct stat st;
 
     if (access(dst_path, F_OK) == 0) {
         return trueblnr;
@@ -582,6 +588,10 @@ static blnr copy_file_if_needed(const char* src_path, const char* dst_path) {
     src_fd = open(src_path, O_RDONLY);
     if (src_fd < 0) {
         return falseblnr;
+    }
+
+    if (fstat(src_fd, &st) == 0) {
+        file_size = st.st_size;
     }
 
     dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
@@ -596,6 +606,10 @@ static blnr copy_file_if_needed(const char* src_path, const char* dst_path) {
             close(src_fd);
             unlink(dst_path);
             return falseblnr;
+        }
+        done += nread;
+        if (progress != NULL) {
+            progress(done, file_size, arg);
         }
     }
 
@@ -634,7 +648,8 @@ static blnr get_user_disks_dir(char* path, size_t size) {
 }
 
 static blnr prepare_user_disk(const char* src_dir, const char* dst_dir,
-    const char* disk_name, char* out_path, size_t out_size)
+    const char* disk_name, char* out_path, size_t out_size,
+    copy_progress_proc progress, void* arg)
 {
     char src_path[512];
 
@@ -645,7 +660,41 @@ static blnr prepare_user_disk(const char* src_dir, const char* dst_dir,
     snprintf(src_path, sizeof(src_path), "%s/%s", src_dir, disk_name);
     snprintf(out_path, out_size, "%s/%s", dst_dir, disk_name);
 
-    return copy_file_if_needed(src_path, out_path);
+    return copy_file_if_needed(src_path, out_path, progress, arg);
+}
+
+/*
+    Disk-copy progress reporting, macemu-style: while the shipped
+    disk images are copied into the user directory the window is
+    already up but the guest is not running yet, so a "copying disk"
+    icon with a byte progress bar (drawn by on_xwin_repaint) is
+    shown instead of the guest frame.  MyDiskCopySplash() runs on
+    the main thread before x_run() starts, so xwin_repaint() pushes
+    every update synchronously.
+*/
+
+static void MyDiskCopySplash(int done, int total);
+
+static off_t copy_base_bytes = 0;
+static off_t copy_total_bytes = 0;
+static uint64_t copy_last_splash_ms = 0;
+
+static void copy_progress_cb(off_t done, off_t file_size, void* arg) {
+    uint64_t now;
+    off_t all;
+
+    (void)arg;
+    /* A repaint is a synchronous IPC to the x server: throttle it */
+    now = kernel_tic_ms(0);
+    if (done != file_size && now - copy_last_splash_ms < 80) {
+        return;
+    }
+    copy_last_splash_ms = now;
+    all = copy_base_bytes + done;
+    if (all > copy_total_bytes) {
+        all = copy_total_bytes;
+    }
+    MyDiskCopySplash((int)all, (int)copy_total_bytes);
 }
 
 LOCALFUNC blnr LoadInitialImages(void)
@@ -673,14 +722,59 @@ LOCALFUNC blnr LoadInitialImages(void)
         }
 
         limit = (disk_count < (size_t)NumDrives) ? disk_count : (size_t)NumDrives;
+
+        /* Total bytes still missing a user copy, for the splash bar */
+        copy_total_bytes = 0;
         for (i = 0; i < limit; ++i) {
+            char src_path[512];
+            char user_path[512];
+            struct stat st;
+
+            snprintf(src_path, sizeof(src_path), "%s/%s",
+                res_disks_dir, disk_names[i]);
+            snprintf(user_path, sizeof(user_path), "%s/%s",
+                user_disks_dir, disk_names[i]);
+            if (access(user_path, F_OK) != 0 &&
+                    stat(src_path, &st) == 0) {
+                copy_total_bytes += st.st_size;
+            }
+        }
+
+        copy_base_bytes = 0;
+        copy_last_splash_ms = 0;
+        if (copy_total_bytes > 0) {
+            MyDiskCopySplash(0, (int)copy_total_bytes);
+        }
+
+        for (i = 0; i < limit; ++i) {
+            char src_path[512];
+            char user_path[512];
+            struct stat st;
+            blnr needs_copy;
+
+            snprintf(user_path, sizeof(user_path), "%s/%s",
+                user_disks_dir, disk_names[i]);
+            needs_copy = (access(user_path, F_OK) != 0);
+
             if (! prepare_user_disk(res_disks_dir, user_disks_dir,
-                    disk_names[i], disk_path, sizeof(disk_path))) {
+                    disk_names[i], disk_path, sizeof(disk_path),
+                    copy_progress_cb, NULL)) {
                 continue;
+            }
+            if (needs_copy) {
+                snprintf(src_path, sizeof(src_path), "%s/%s",
+                    res_disks_dir, disk_names[i]);
+                if (stat(src_path, &st) == 0) {
+                    copy_base_bytes += st.st_size;
+                }
             }
             if (! Sony_Insert2(disk_path)) {
                 break;
             }
+        }
+
+        if (copy_total_bytes > 0) {
+            MyDiskCopySplash(0, 0);
         }
 
         free_disk_names(disk_names, disk_count);
@@ -2018,11 +2112,125 @@ static void on_xwin_event(xwin_t* win, xevent_t* ev) {
     }
 }
 
+/*
+    Pre-boot "copying disk" splash, same as macemu's: while
+    LoadInitialImages() copies the shipped disk images into the user
+    directory the window is already up but the guest is not running
+    yet, so show a disk-copy icon with a progress bar instead of the
+    (still blank) guest frame.
+*/
+
+static blnr copy_splash = falseblnr;
+static int copy_splash_done = 0;
+static int copy_splash_total = 0;
+
+#define SPLASH_BG      0xff151515
+#define SPLASH_FG      0xffb8b8b8
+#define SPLASH_SHUTTER 0xff5a5a5a
+#define SPLASH_LABEL   0xfff2f2f2
+#define SPLASH_TRACK   0xff3c3c3c
+
+static void draw_floppy(graph_t* g, int x, int y, int s) {
+    /* Body */
+    int sw, sh, sx;
+    int lw, lh, lx, ly, lh1;
+
+    graph_fill_round(g, x, y, s, s, s/10, SPLASH_FG);
+    /* Metal shutter with its slider slot */
+    sw = s*3/7; sh = s*2/7;
+    sx = x + (s - sw)/2 + s/12;
+    graph_fill_rect(g, sx, y, sw, sh, SPLASH_SHUTTER);
+    graph_fill_rect(g, sx + sw/6, y + sh/8, sw/5, sh*3/4, SPLASH_BG);
+    /* Label with two ruled lines */
+    lw = s*5/7; lh = s*2/5;
+    lx = x + (s - lw)/2; ly = y + s*11/20;
+    lh1 = (lh/12 > 1) ? lh/12 : 1;
+    graph_fill_rect(g, lx, ly, lw, lh, SPLASH_LABEL);
+    graph_fill_rect(g, lx + lw/8, ly + lh/3, lw*3/4, lh1, SPLASH_SHUTTER);
+    graph_fill_rect(g, lx + lw/8, ly + lh*2/3, lw*3/4, lh1, SPLASH_SHUTTER);
+}
+
+static void draw_copy_arrow(graph_t* g, int x, int cy, int s) {
+    int shaft_h = (s/8 > 2) ? s/8 : 2;
+    int shaft_len = s/4;
+    int head_len = s/5;
+    int head_h = s/3;
+    int ax;
+    int i;
+
+    graph_fill_rect(g, x, cy - shaft_h/2, shaft_len, shaft_h, SPLASH_FG);
+    /* Triangle head built from 1px columns (no polygon fill in the graph lib) */
+    ax = x + shaft_len;
+    for (i = 0; i < head_len; i++) {
+        int hh = head_h * (head_len - i) / head_len;
+        graph_fill_rect(g, ax + i, cy - hh/2, 1, hh, SPLASH_FG);
+    }
+}
+
+static void draw_copy_splash(graph_t* g) {
+    int gw = g->w, gh = g->h;
+    int s, gap, arrow_len, total_w, bar_h, block_h;
+    int x0, y0, cy, by;
+
+    graph_fill_rect(g, 0, 0, gw, gh, SPLASH_BG);
+
+    /* Icon size follows the window, like the letterboxed guest frame does */
+    s = ((gw < gh) ? gw : gh) / 6;
+    if (s < 40) s = 40;
+    if (s > 96) s = 96;
+
+    gap = s/4;
+    arrow_len = s/4 + s/5;  /* shaft + head */
+    total_w = s + gap + arrow_len + gap + s;
+    bar_h = (s/10 > 4) ? s/10 : 4;
+    block_h = s + s/5 + bar_h;
+
+    x0 = (gw - total_w)/2;
+    y0 = (gh - block_h)/2;
+    cy = y0 + s/2;
+
+    draw_floppy(g, x0, y0, s);
+    draw_copy_arrow(g, x0 + s + gap, cy, s);
+    draw_floppy(g, x0 + s + gap + arrow_len + gap, y0, s);
+
+    /* Byte progress across all pending disk images */
+    by = y0 + s + s/5;
+    graph_fill_round(g, x0, by, total_w, bar_h, bar_h/2, SPLASH_TRACK);
+    if (copy_splash_total > 0) {
+        int fw = (int)((long long)total_w * copy_splash_done / copy_splash_total);
+        if (fw > bar_h) {
+            graph_fill_round(g, x0, by, fw, bar_h, bar_h/2, SPLASH_FG);
+        }
+    }
+}
+
+static void MyDiskCopySplash(int done, int total) {
+    if (NULL == xwin) {
+        return;
+    }
+    if (total <= 0) {
+        copy_splash = falseblnr;
+        copy_splash_done = 0;
+        copy_splash_total = 0;
+    } else {
+        copy_splash = trueblnr;
+        copy_splash_done = done;
+        copy_splash_total = total;
+    }
+    xwin_repaint(xwin);
+}
+
 static graph_t* scaled = NULL;
 static void on_xwin_repaint(xwin_t* win, graph_t* g) {
     if (g == NULL)
         return;
-    
+
+    /* Pre-boot disk-copy splash replaces the (still blank) guest frame */
+    if (copy_splash) {
+        draw_copy_splash(g);
+        return;
+    }
+
     screen_graph = g;
     window_width = g->w;
     window_height = g->h;
@@ -2037,7 +2245,7 @@ static void on_xwin_repaint(xwin_t* win, graph_t* g) {
         float scale_x = (float)g->w / screen_buffer->w;
         float scale_y = (float)g->h / screen_buffer->h;
         float scale = (scale_x < scale_y) ? scale_x : scale_y;
-        if (scale < 1.0f) scale = 1.0f;
+        if (scale < 0.5f) scale = 0.5f;
 
         int scaled_w = screen_buffer->w * scale;
         int scaled_h = screen_buffer->h * scale;
@@ -2048,7 +2256,7 @@ static void on_xwin_repaint(xwin_t* win, graph_t* g) {
         display_offset_x = offset_x;
         display_offset_y = offset_y;
 
-        if (scale > 1) {
+        if (scale != 1.0) {
             if (scaled == NULL || scaled->w != scaled_w || scaled->h != scaled_h) {
                 graph_t* tmp = graph_new(NULL, scaled_w, scaled_h);
                 if(scaled != NULL)
@@ -2197,6 +2405,10 @@ LOCALFUNC blnr CreateMainWindow(void)
     xwin_hide_cursor(xwin, true);
     xwin_fullscreen(xwin);
     xwin_set_visible(xwin, true);
+
+    /* push the initial (white) frame at once instead of leaving
+       the window black until the first published guest frame */
+    xwin_repaint(xwin);
 
     window_width = NewWindowWidth;
     window_height = NewWindowHeight;
@@ -2470,9 +2682,28 @@ LOCALPROC PublishFrameChanges(void)
     }
 }
 
+/*
+    Fast boot: the Mac Plus ROM runs a full power-on memory test
+    (4 MB here) before it draws anything; at faithful 1x speed that
+    leaves the screen black for several seconds (Basilisk II patches
+    the test out, which is why macemu shows video right away).  Run
+    the first ticks "all out": the CPU gets host-speed cycle bursts
+    within each tick while the ticks themselves stay paced at real
+    60Hz, so the pacing clock and the tick-driven sound engine never
+    desync; the test finishes in a fraction of the usual time.
+*/
+#define kFastBootTicks 120  /* ~2s worst-case cap on slow hosts */
+
 LOCALFUNC void *emu_thread_entry(void *arg)
 {
+    ui3b saved_speed;
+    int fast_ticks;
+
     (void)arg;
+
+    saved_speed = SpeedValue;
+    fast_ticks = kFastBootTicks;
+    SpeedValue = (ui3b) -1;
 
     while (emu_thread_running) {
         if (ForceMacOff || CurSpeedStopped) {
@@ -2484,6 +2715,17 @@ LOCALFUNC void *emu_thread_entry(void *arg)
 
         UpdateTrueEmulatedTime();
         RunOnEndOfSixtieth();
+
+        if (fast_ticks > 0) {
+            /* all-out extra cycles for the ROM self-test; restore
+               the configured speed when the budget is exhausted */
+            --fast_ticks;
+            DoEmulateExtraTime();
+            if (0 == fast_ticks) {
+                SpeedValue = saved_speed;
+            }
+        }
+
         PublishFrameChanges();
 
         /* sleep until the next 60.15Hz tick boundary */

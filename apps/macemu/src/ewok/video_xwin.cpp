@@ -190,11 +190,11 @@ static int present_top = DIRTY_NONE_TOP;		// snapshot of dirty_top, x thread onl
 static int present_bottom = DIRTY_NONE_BOT;
 static bool incremental_repaint = false;		// x thread only: present just the dirty rows
 
-// Nearest-neighbour upscale tables (scale > 1), rebuilt only when the window
-// layout changes; replaces the per-frame malloc/free of graph_scalef_fast
-// in the repaint path.
-static int *xmap = NULL, *ymap = NULL;
-static int xmap_len = 0, ymap_len = 0;
+// Upscale cache (scale > 1): refilled by graph_scale_tof_fast() — the
+// system graph library's fast scaler, the same one minivmac uses — on
+// every present, and reallocated only when the window layout changes.
+// x thread only.
+static graph_t *scaled = NULL;
 static float last_scale = 0.0f;
 static int last_gw = 0, last_gh = 0, last_ox = 0, last_oy = 0;
 
@@ -302,9 +302,9 @@ public:
  *  Frame conversion: Mac layout (big-endian) -> host ARGB8888
  */
 
-static void convert_rows(uint32 y0, uint32 y1)
+static void convert_rows(const uint8 *src_fb, uint32 y0, uint32 y1)
 {
-	if (frame_graph == NULL || the_buffer == NULL)
+	if (frame_graph == NULL || src_fb == NULL)
 		return;
 
 	const video_mode &mode = VideoMonitors[0]->get_current_mode();
@@ -327,7 +327,7 @@ static void convert_rows(uint32 y0, uint32 y1)
 		default:          ppb = 1; bpp = 8; mask = 255; break;
 		}
 		for (uint32 y = y0; y <= y_end; y++) {
-			const uint8 *src = the_buffer + y * bpr;
+			const uint8 *src = src_fb + y * bpr;
 			for (uint32 x = 0; x < w; x++) {
 				int idx;
 				if (ppb == 1) {
@@ -348,7 +348,7 @@ static void convert_rows(uint32 y0, uint32 y1)
 	case VDEPTH_16BIT:
 		// Mac 16-bit = big-endian RGB555
 		for (uint32 y = y0; y <= y_end; y++) {
-			const uint8 *src = the_buffer + y * bpr;
+			const uint8 *src = src_fb + y * bpr;
 			for (uint32 x = 0; x < w; x++) {
 				uint32 v = (src[x * 2] << 8) | src[x * 2 + 1];
 				uint32 r = (v >> 10) & 0x1f;
@@ -365,7 +365,7 @@ static void convert_rows(uint32 y0, uint32 y1)
 	case VDEPTH_32BIT:
 		// Mac 32-bit = big-endian xRGB: bytes [00][RR][GG][BB]
 		for (uint32 y = y0; y <= y_end; y++) {
-			const uint8 *src = the_buffer + y * bpr;
+			const uint8 *src = src_fb + y * bpr;
 			for (uint32 x = 0; x < w; x++) {
 				dst[x] = 0xff000000 | (src[x * 4 + 1] << 16) | (src[x * 4 + 2] << 8) | src[x * 4 + 3];
 			}
@@ -381,11 +381,19 @@ static void convert_rows(uint32 y0, uint32 y1)
  *  (VBL) and the x thread (input-paced polling), so the whole scan
  *  runs under frame_lock: a concurrent switch_to_current_mode() frees
  *  and reallocates the_buffer under the same lock, and reading a stale
- *  pointer mid-scan must be impossible.  The compare may still race
- *  with the guest drawing a row (it never takes the lock); a torn row
- *  is latched into the_shadow converted half-done, but then the guest
- *  finishes the row, it differs again and the next scan reconverts it
- *  — self-healing by construction.
+ *  pointer mid-scan must be impossible.
+ *
+ *  The guest draws into the_buffer without ever taking the lock, so
+ *  the compare/convert may race with a row being drawn.  To stay
+ *  coherent the changed rows are latched into the_shadow FIRST and
+ *  the conversion reads the_shadow, never the_buffer: frame_graph
+ *  then always matches the shadow exactly, and any guest write that
+ *  lands after the latch makes the row differ from the shadow again,
+ *  so the next scan reconverts it — self-healing by construction.
+ *  (Converting from the_buffer and copying the shadow afterwards was
+ *  not coherent: a guest write between the two was latched into the
+ *  shadow but never converted, leaving a permanently stale row —
+ *  the visible "redraw ghost" — until the row changed again.)
  */
 static void scan_convert_rows(void)
 {
@@ -413,11 +421,17 @@ static void scan_convert_rows(void)
 	force_full = false;
 
 	if (bottom >= top) {
-		convert_rows(top, bottom);
+		// Latch the changed rows into the shadow first, then convert
+		// from the shadow (see the comment above): frame_graph and
+		// the_shadow are one coherent snapshot, and a guest write
+		// racing the latch simply re-dirties the row on the next scan.
+		const uint8 *src_fb = the_buffer;
 		if (the_shadow != NULL) {
 			for (uint32 y = top; y <= bottom; y++)
 				memcpy(the_shadow + y * bpr, the_buffer + y * bpr, bpr);
+			src_fb = the_shadow;
 		}
+		convert_rows(src_fb, top, bottom);
 		if (frame_pending) {	// previous range not presented yet: merge
 			if ((int)top < dirty_top) dirty_top = (int)top;
 			if ((int)bottom > dirty_bottom) dirty_bottom = (int)bottom;
@@ -518,12 +532,12 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 	bool incremental = incremental_repaint;
 	incremental_repaint = false;
 
-	// NO frame_lock here: the blit below is the longest frame-path
+	// NO frame_lock here: the scale+blit below is the longest frame-path
 	// critical section, and this thread can be preempted mid-blit
 	// (per-core pinned scheduling); holding frame_lock would stall the
 	// 68k thread's per-VBL scan_convert_rows() behind it and freeze the
 	// guest's VBL pipeline.  Everything touched here is either x-thread
-	// local (view_*, present_*, xmap/ymap) or safe by construction:
+	// local (view_*, present_*, scaled) or safe by construction:
 	// frame_graph is swapped atomically at mode switch and its old
 	// buffer is freed one cycle later (see switch_to_current_mode), so
 	// a concurrently swapped pointer can only cost one torn frame.
@@ -533,7 +547,7 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 		float scale_x = (float)g->w / fw;
 		float scale_y = (float)g->h / fh;
 		float scale = (scale_x < scale_y) ? scale_x : scale_y;
-		if (scale < 1.0f) scale = 1.0f;
+		if (scale < 0.5f) scale = 0.5f;
 
 		int scaled_w = (int)(fw * scale);
 		int scaled_h = (int)(fh * scale);
@@ -548,33 +562,9 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 			last_gw != g->w || last_gh != g->h || last_scale != scale ||
 			last_ox != offset_x || last_oy != offset_y;
 		if (layout_changed) {
-			// Window geometry changed: clear the letterbox once, rebuild
-			// the upscale tables and redraw everything below.
+			// Window geometry changed: clear the letterbox once and
+			// redraw everything below.
 			graph_fill_rect(g, 0, 0, g->w, g->h, 0xff000000);
-			if (xmap == NULL || xmap_len != scaled_w) {
-				free(xmap);
-				xmap = (int *)malloc((uint32)scaled_w * sizeof(int));
-				xmap_len = xmap != NULL ? scaled_w : 0;
-			}
-			if (ymap == NULL || ymap_len != scaled_h) {
-				free(ymap);
-				ymap = (int *)malloc((uint32)scaled_h * sizeof(int));
-				ymap_len = ymap != NULL ? scaled_h : 0;
-			}
-			if (xmap != NULL && ymap != NULL) {
-				for (int i = 0; i < scaled_w; i++) {
-					int sx = (int)(((float)i + 0.5f) / scale);
-					if (sx < 0) sx = 0;
-					if (sx >= fw) sx = fw - 1;
-					xmap[i] = sx;
-				}
-				for (int j = 0; j < scaled_h; j++) {
-					int sy = (int)(((float)j + 0.5f) / scale);
-					if (sy < 0) sy = 0;
-					if (sy >= fh) sy = fh - 1;
-					ymap[j] = sy;
-				}
-			}
 			last_gw = g->w; last_gh = g->h;
 			last_scale = scale; last_ox = offset_x; last_oy = offset_y;
 		}
@@ -593,22 +583,34 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 		if (top >= 0 && top < fh && bottom >= top) {
 			if (bottom > fh - 1) bottom = fh - 1;
 
-			if (scale > 1.0f) {
-				// Nearest-neighbour rows (centre sampling): only the
-				// destination rows the dirty band maps onto are touched,
-				// so a moving cursor costs a few dozen rows instead of
-				// the whole upscaled frame.
-				if (xmap != NULL && ymap != NULL) {
-					int dy0 = offset_y + (int)((float)top * scale);
-					int dy1 = offset_y + (int)(((float)bottom + 1.0f) * scale + 0.99f) - 1;
+			if (scale != 1.0f) {
+				// minivmac-style scaling through the system graph
+				// library: graph_scale_tof_fast() into the cached graph,
+				// then blit.  The rescale is full-frame (the arch path is
+				// a separable row-cached pass); only the blit is limited
+				// to the destination rows the dirty band maps onto,
+				// expanded by one source row each way to cover the
+				// bilinear vertical taps.
+				if (scaled == NULL || scaled->w != scaled_w || scaled->h != scaled_h) {
+					graph_t *tmp = graph_new(NULL, scaled_w, scaled_h);
+					if (scaled != NULL)
+						graph_free(scaled);
+					scaled = tmp;
+				}
+				if (scaled != NULL) {
+					graph_scale_tof_fast(fg, scaled, scale);
+					int bt = (top > 0) ? top - 1 : 0;
+					int bb = (bottom < fh - 1) ? bottom + 1 : fh - 1;
+					int dy0 = offset_y + (int)(bt * scale);
+					int dy1 = offset_y + (int)((bb + 1) * scale + 0.99f) - 1;
 					if (dy0 < offset_y) dy0 = offset_y;
 					if (dy1 > offset_y + scaled_h - 1) dy1 = offset_y + scaled_h - 1;
-					for (int dy = dy0; dy <= dy1; dy++) {
-						const uint32 *srow = fg->buffer + (uint32)ymap[dy - offset_y] * fw;
-						uint32 *drow = g->buffer + (uint32)dy * g->w + offset_x;
-						for (int dx = 0; dx < scaled_w; dx++)
-							drow[dx] = srow[xmap[dx]];
-					}
+					graph_blt(scaled, 0, dy0 - offset_y, scaled_w, dy1 - dy0 + 1,
+						g, offset_x, dy0, scaled_w, dy1 - dy0 + 1);
+				} else {
+					// Cache allocation failed: let graph_blt() scale directly
+					graph_blt(fg, 0, 0, fw, fh,
+						g, offset_x, offset_y, scaled_w, scaled_h);
 				}
 			} else {
 				graph_blt(fg, 0, top, fw, bottom - top + 1,
@@ -995,12 +997,10 @@ void VideoExit(void)
 	the_buffer = NULL;
 	free(the_shadow);
 	the_shadow = NULL;
-	free(xmap);
-	xmap = NULL;
-	xmap_len = 0;
-	free(ymap);
-	ymap = NULL;
-	ymap_len = 0;
+	if (scaled != NULL) {
+		graph_free(scaled);
+		scaled = NULL;
+	}
 	pthread_mutex_unlock(&frame_lock);
 }
 
