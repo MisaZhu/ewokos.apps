@@ -115,8 +115,13 @@ static int display_depth = 8;
 static uint8 *the_buffer = NULL;
 static uint32 the_buffer_size = 0;
 
-// Converted ARGB8888 frame, blitted to the window on repaint
+// Converted ARGB8888 frame, blitted to the window on repaint.
+// frame_graph is never freed at mode-switch time: the x thread's
+// repaint blits from it WITHOUT holding frame_lock (a stale buffer
+// only costs one torn frame after a switch), so the old buffer is
+// retired one mode-switch cycle later via stale_frame_graph.
 static graph_t *frame_graph = NULL;
+static graph_t *stale_frame_graph = NULL;
 static uint8 frame_pal[256 * 3];      // Current palette (RGB)
 
 static pthread_mutex_t frame_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -142,6 +147,8 @@ static bool vbl_once = false;
 static uint64_t last_input_ms = 0;	// x thread only: last input event time
 static uint64_t last_present_ms = 0;	// x thread only: last guest-frame present
 #define PRESENT_INTERVAL_MS 16	// ~guest VBL cadence
+static uint64_t last_scan_ms = 0;		// x thread only: last dirty-row scan
+#define SCAN_INTERVAL_MS 8	// VideoInterrupt also scans per VBL
 
 // Touch panels stream MOVE events at panel rate, far faster than the
 // guest consumes the absolute position (its cursor machinery runs at the
@@ -511,9 +518,18 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 	bool incremental = incremental_repaint;
 	incremental_repaint = false;
 
-	pthread_mutex_lock(&frame_lock);
-	if (frame_graph != NULL && frame_graph->buffer != NULL) {
-		int fw = frame_graph->w, fh = frame_graph->h;
+	// NO frame_lock here: the blit below is the longest frame-path
+	// critical section, and this thread can be preempted mid-blit
+	// (per-core pinned scheduling); holding frame_lock would stall the
+	// 68k thread's per-VBL scan_convert_rows() behind it and freeze the
+	// guest's VBL pipeline.  Everything touched here is either x-thread
+	// local (view_*, present_*, xmap/ymap) or safe by construction:
+	// frame_graph is swapped atomically at mode switch and its old
+	// buffer is freed one cycle later (see switch_to_current_mode), so
+	// a concurrently swapped pointer can only cost one torn frame.
+	graph_t *fg = frame_graph;
+	if (fg != NULL && fg->buffer != NULL) {
+		int fw = fg->w, fh = fg->h;
 		float scale_x = (float)g->w / fw;
 		float scale_y = (float)g->h / fh;
 		float scale = (scale_x < scale_y) ? scale_x : scale_y;
@@ -588,19 +604,18 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 					if (dy0 < offset_y) dy0 = offset_y;
 					if (dy1 > offset_y + scaled_h - 1) dy1 = offset_y + scaled_h - 1;
 					for (int dy = dy0; dy <= dy1; dy++) {
-						const uint32 *srow = frame_graph->buffer + (uint32)ymap[dy - offset_y] * fw;
+						const uint32 *srow = fg->buffer + (uint32)ymap[dy - offset_y] * fw;
 						uint32 *drow = g->buffer + (uint32)dy * g->w + offset_x;
 						for (int dx = 0; dx < scaled_w; dx++)
 							drow[dx] = srow[xmap[dx]];
 					}
 				}
 			} else {
-				graph_blt(frame_graph, 0, top, fw, bottom - top + 1,
+				graph_blt(fg, 0, top, fw, bottom - top + 1,
 					g, offset_x, offset_y + top, fw, bottom - top + 1);
 			}
 		}
 	}
-	pthread_mutex_unlock(&frame_lock);
 }
 
 static void xwin_loop(void *p)
@@ -628,8 +643,14 @@ static void xwin_loop(void *p)
 		flush_pending_move();
 
 	// Pick up freshly drawn guest rows (a moving cursor above all)
-	// without waiting for the next 60Hz VBL
-	scan_convert_rows();
+	// without waiting for the next 60Hz VBL.  Gated: VideoInterrupt()
+	// already scans per VBL, and every scan is a frame_lock section
+	// plus a full-frame compare — running it at the 5ms input budget
+	// would pile lock traffic onto the 68k thread for nothing.
+	if (tik - last_scan_ms >= SCAN_INTERVAL_MS) {
+		last_scan_ms = tik;
+		scan_convert_rows();
+	}
 
 	// Present at most one frame per guest VBL.  xwin_repaint() ends in a
 	// synchronous UPDATE_REFRESH IPC to xserverd; while input flows this
@@ -738,8 +759,12 @@ void XWIN_monitor_desc::switch_to_current_mode(void)
 	// full-frame convert every VBL
 	the_shadow = (uint8 *)calloc(1, ((the_buffer_size >> 16) + 1) << 16);
 
-	if (frame_graph != NULL)
-		graph_free(frame_graph);
+	// Swap in the new frame graph under frame_lock (the scan path uses
+	// it there), but defer the free: a lock-free repaint blit on the x
+	// thread may still be reading the old buffer.
+	if (stale_frame_graph != NULL)
+		graph_free(stale_frame_graph);
+	stale_frame_graph = frame_graph;
 	frame_graph = graph_new(NULL, width, height);
 
 	// UAE memory banking variables
@@ -961,6 +986,10 @@ void VideoExit(void)
 	if (frame_graph != NULL) {
 		graph_free(frame_graph);
 		frame_graph = NULL;
+	}
+	if (stale_frame_graph != NULL) {
+		graph_free(stale_frame_graph);
+		stale_frame_graph = NULL;
 	}
 	free(the_buffer);
 	the_buffer = NULL;
