@@ -9,3 +9,10 @@
 build
 .xmake
 *.a
+apps/macemu/host/build68k
+apps/macemu/host/gencpu
+apps/macemu/src/uae_cpu/cpudefs.cpp
+apps/macemu/src/uae_cpu/cpuemu.cpp
+apps/macemu/src/uae_cpu/cpustbl_nf.cpp
+apps/macemu/src/uae_cpu/cpustbl.cpp
+apps/macemu/src/uae_cpu/cputbl.h
