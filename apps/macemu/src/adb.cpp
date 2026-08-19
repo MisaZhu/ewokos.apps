@@ -59,26 +59,50 @@ static unsigned int key_read_ptr = 0, key_write_ptr = 0;
 
 static uint8 mouse_reg_3[2] = {0x63, 0x01};	// Mouse ADB register 3
 
+// Button edges wait one full guest VBL after a cursor position write
+// before being sent.  Touch delivers a brand-new position and the button
+// press in the very same event (a real mouse always moves first, so the
+// guest cursor has long settled by the time the button changes).
+// Writing MTemp/RawMouse and calling the guest's ADB handler inside one
+// dispatch made the guest post the press at the previous cursor position
+// (cursor drawn at the new spot, click landing at the old one) — the
+// guest's VBL cursor task must absorb the move first.  minivmac encodes
+// the same rule explicitly: its event queue processes the position event
+// ahead of the button event at emulation frame cadence.
+
 static uint8 key_reg_2[2] = {0xff, 0xff};	// Keyboard ADB register 2
 static uint8 key_reg_3[2] = {0x62, 0x05};	// Keyboard ADB register 3
 
 static uint8 m_keyboard_type = 0x05;
 
+// Guest-VBL settle gate (68k thread only): adb_vbl_count ticks once per
+// VideoInterrupt (the guest 60Hz tick); a queued button edge may only be
+// dispatched once adb_vbl_count has reached btn_edge_earliest_vbl.
+static uint32 adb_vbl_count = 0;
+static uint32 btn_edge_earliest_vbl = 0;
+
 // Pending button edges (mouse_lock protected).  One entry per state
-// transition, holding the full button bitmap of that moment.  Dispatching
-// ADB packets from a "current state vs last sent" compare can only see
-// the final state, so a quick UP+DOWN pair (touch tip bounce) merged into
-// one interrupt dispatch vanished entirely and left the guest stuck on a
-// phantom press.  An explicit edge queue keeps every transition, exactly
-// like minivmac's MyEvtQ.
+// transition, holding the full button bitmap of that moment plus the
+// cursor position the event happened at.  Dispatching ADB packets from a
+// "current state vs last sent" compare can only see the final state, so a
+// quick UP+DOWN pair (touch tip bounce) merged into one interrupt dispatch
+// vanished entirely and left the guest stuck on a phantom press.  An
+// explicit edge queue keeps every transition, exactly like minivmac's
+// MyEvtQ — and snapshotting the position per edge (minivmac stores the
+// position event ahead of each button event in the same queue) keeps
+// delayed dispatch from replaying a queued tap at the *current* cursor
+// position instead of the tapped spot.
 #define BTN_Q_SIZE 32
 static uint8 btn_q[BTN_Q_SIZE];
+static int btn_q_x[BTN_Q_SIZE], btn_q_y[BTN_Q_SIZE];
 static int btn_q_head = 0, btn_q_tail = 0;		// head = next to send, tail = next free
 static uint8 btn_queued_state = 0;				// button bitmap of the last queued edge
 
 static void queue_btn_edge(uint8 st)
 {
 	btn_q[btn_q_tail] = st;
+	btn_q_x[btn_q_tail] = mouse_x;				// caller holds mouse_lock
+	btn_q_y[btn_q_tail] = mouse_y;
 	btn_q_tail = (btn_q_tail + 1) % BTN_Q_SIZE;
 	if (btn_q_tail == btn_q_head)				// full: drop the oldest edge
 		btn_q_head = (btn_q_head + 1) % BTN_Q_SIZE;
@@ -277,8 +301,6 @@ void ADBMouseMoved(int x, int y)
 
 void ADBMouseDown(int button)
 {
-	uint8 q_before = 0;
-	bool forced = false;
 	B2_lock_mutex(mouse_lock);
 	mouse_button[button] = true;
 	if (!relative_mouse) {
@@ -286,18 +308,15 @@ void ADBMouseDown(int button)
 		if (mouse_button[0]) st |= 1;
 		if (mouse_button[1]) st |= 2;
 		if (mouse_button[2]) st |= 4;
-		q_before = btn_queued_state;
 		// minivmac semantics: a DOWN always delivers a complete press
 		// edge.  If this button is already queued pressed (repeated DOWN,
 		// or a lost UP), force a release edge first so a stuck guest
 		// state recovers — MyMouseButtonSet(false) before (true).
-		forced = (btn_queued_state & (1 << button)) != 0;
-		if (forced)
+		if ((btn_queued_state & (1 << button)) != 0)
 			queue_btn_edge(st & ~(1 << button));
 		queue_btn_edge(st);
 	}
 	B2_unlock_mutex(mouse_lock);
-	printf("dbg adb: DOWN b=%d q=%d forced=%d\n", button, q_before, forced);
 	SetInterruptFlag(INTFLAG_ADB);
 	TriggerInterrupt();
 }
@@ -309,8 +328,6 @@ void ADBMouseDown(int button)
 
 void ADBMouseUp(int button)
 {
-	uint8 q_before = 0;
-	bool queued = false;
 	B2_lock_mutex(mouse_lock);
 	mouse_button[button] = false;
 	if (!relative_mouse) {
@@ -318,15 +335,12 @@ void ADBMouseUp(int button)
 		if (mouse_button[0]) st |= 1;
 		if (mouse_button[1]) st |= 2;
 		if (mouse_button[2]) st |= 4;
-		q_before = btn_queued_state;
 		// Edge dedup like minivmac's MyMouseButtonSet: a repeated UP
 		// (button already queued released) queues nothing
-		queued = (btn_queued_state & (1 << button)) != 0;
-		if (queued)
+		if ((btn_queued_state & (1 << button)) != 0)
 			queue_btn_edge(st);
 	}
 	B2_unlock_mutex(mouse_lock);
-	printf("dbg adb: UP b=%d q=%d queued=%d\n", button, q_before, queued);
 	SetInterruptFlag(INTFLAG_ADB);
 	TriggerInterrupt();
 }
@@ -384,6 +398,49 @@ void ADBKeyUp(int code)
 
 
 /*
+ *  Drop all pending input events (button edges and key events)
+ *
+ *  Called when the guest cannot service ADB packets yet (before the Mac
+ *  has started, or while the ADB manager is reinitializing).  Without
+ *  this, edges queued during that window survive and replay later as
+ *  phantom clicks at stale positions — the guest would appear to respond
+ *  to an event that happened long ago.
+ */
+
+void ADBFlush(void)
+{
+	B2_lock_mutex(mouse_lock);
+	btn_q_head = btn_q_tail;
+	btn_queued_state = 0;
+	B2_unlock_mutex(mouse_lock);
+	key_read_ptr = key_write_ptr;
+}
+
+
+/*
+ *  Guest VBL tick (called from VideoInterrupt, 68k thread, 60Hz)
+ *
+ *  Advances the button-edge settle gate and keeps queued edges flowing:
+ *  dispatch is otherwise purely input-triggered, so an edge held off by
+ *  the settle gate (a lone tap, no further events) would stall until the
+ *  next host event without this heartbeat.  Pre-boot the flag resolves
+ *  to ADBFlush(), which drops the stale edges as intended.
+ */
+
+void ADBVBLTick(void)
+{
+	adb_vbl_count++;
+	B2_lock_mutex(mouse_lock);
+	bool edges_pending = (btn_q_head != btn_q_tail);
+	B2_unlock_mutex(mouse_lock);
+	if (edges_pending) {
+		SetInterruptFlag(INTFLAG_ADB);
+		TriggerInterrupt();
+	}
+}
+
+
+/*
  *  ADB interrupt function (executed as part of 60Hz interrupt)
  */
 
@@ -391,16 +448,11 @@ void ADBInterrupt(void)
 {
 	M68kRegisters r;
 
-	// Return if ADB is not initialized
+	// Return if ADB is not initialized.  Keep queued events: the guest
+	// services them as soon as the ADB manager is back, in order.
 	uint32 adb_base = ReadMacInt32(0xcf8);
-	if (!adb_base || adb_base == 0xffffffff) {
-		// NOTE: the INTFLAG_ADB was already cleared by the dispatcher, so
-		// any queued button edge stays stuck here until the next input
-		// event re-arms the flag — a release edge stuck this way leaves
-		// the guest with a pressed mouse button.
-		printf("dbg adb: IRQ SKIP base=%08x\n", adb_base);
+	if (!adb_base || adb_base == 0xffffffff)
 		return;
-	}
 	uint32 tmp_data = adb_base + 0x163;	// Temporary storage for faked ADB data
 
 	// Get mouse state
@@ -458,11 +510,11 @@ void ADBInterrupt(void)
 				0xaa, 0xdb,		// CursorDeviceDispatch
 				M68K_RTS >> 8, M68K_RTS & 0xff
 			};
-			BUILD_SHEEPSHAVER_PROCEDURE(proc);
+			BUILD_SHEEPSHAVER_PROCEDURE(proc_template);
 			r.a[0] = ReadMacInt32(mouse_base + 4);
 			r.d[0] = mx;
 			r.d[1] = my;
-			Execute68k(proc, &r);
+			Execute68k(proc_template, &r);
 #else
 			WriteMacInt16(0x82a, mx);
 			WriteMacInt16(0x828, my);
@@ -472,6 +524,13 @@ void ADBInterrupt(void)
 #endif
 			old_mouse_x = mx;
 			old_mouse_y = my;
+			// Give the guest cursor machinery one full VBL to absorb the
+			// new position before a queued button edge may land — a press
+			// must never beat the move it belongs to.  Don't extend an
+			// already running wait: during a drag the press edge would
+			// starve until the motion stops.
+			if ((int32)(adb_vbl_count - btn_edge_earliest_vbl) >= 0)
+				btn_edge_earliest_vbl = adb_vbl_count + 1;
 		}
 
 		// Send ONE queued button edge per interrupt dispatch.  Upstream
@@ -480,16 +539,26 @@ void ADBInterrupt(void)
 		// quick tap queues press+release back to back, and draining the
 		// whole burst into back-to-back Execute68k calls inside one
 		// dispatch window made the guest drop the release (finger up,
-		// Mac still dragging).  Leftover edges stay queued; re-arm the
+		// Mac still dragging).  The edge carries the cursor position it
+		// was queued at; move the guest cursor there before the packet so
+		// a delayed dispatch still presses/releases at the tapped spot
+		// (minivmac replays its queued position event ahead of the button
+		// event the same way).  Leftover edges stay queued; re-arm the
 		// flag and self-trigger so the next 68k checkpoint dispatches the
 		// next edge microseconds later — a tap's press and release are
 		// two independent service calls, exactly like real hardware.
 		uint8 edge = 0;
 		bool have_edge = false;
 		bool more_edges = false;
+		int ex = 0, ey = 0;
+		// While a fresh position write is settling, edges stay queued;
+		// the ADBVBLTick heartbeat re-triggers dispatch at the next VBL.
+		bool settle_ok = (int32)(adb_vbl_count - btn_edge_earliest_vbl) >= 0;
 		B2_lock_mutex(mouse_lock);
-		if (btn_q_head != btn_q_tail) {
+		if (settle_ok && btn_q_head != btn_q_tail) {
 			edge = btn_q[btn_q_head];
+			ex = btn_q_x[btn_q_head];
+			ey = btn_q_y[btn_q_head];
 			btn_q_head = (btn_q_head + 1) % BTN_Q_SIZE;
 			have_edge = true;
 			more_edges = (btn_q_head != btn_q_tail);
@@ -497,10 +566,35 @@ void ADBInterrupt(void)
 		B2_unlock_mutex(mouse_lock);
 
 		if (have_edge) {
+			if (ex != old_mouse_x || ey != old_mouse_y) {
+#ifdef POWERPC_ROM
+				static const uint8 edge_proc_template[] = {
+					0x2f, 0x08,		// move.l a0,-(sp)
+					0x2f, 0x00,		// move.l d0,-(sp)
+					0x2f, 0x01,		// move.l d1,-(sp)
+					0x70, 0x01,		// moveq #1,d0 (MoveTo)
+					0xaa, 0xdb,		// CursorDeviceDispatch
+					M68K_RTS >> 8, M68K_RTS & 0xff
+				};
+				BUILD_SHEEPSHAVER_PROCEDURE(edge_proc_template);
+				r.a[0] = ReadMacInt32(mouse_base + 4);
+				r.d[0] = ex;
+				r.d[1] = ey;
+				Execute68k(edge_proc_template, &r);
+#else
+				WriteMacInt16(0x82a, ex);
+				WriteMacInt16(0x828, ey);
+				WriteMacInt16(0x82e, ex);
+				WriteMacInt16(0x82c, ey);
+				WriteMacInt8(0x8ce, ReadMacInt8(0x8cf));	// CrsrCouple -> CrsrNew
+#endif
+				old_mouse_x = ex;
+				old_mouse_y = ey;
+			}
+
 			bool b0 = (edge & 1) != 0;
 			bool b1 = (edge & 2) != 0;
 			bool b2 = (edge & 4) != 0;
-			printf("dbg adb: IRQ edge=%d more=%d mx=%d my=%d\n", edge, more_edges, mx, my);
 
 			// Call mouse ADB handler
 			if (mouse_reg_3[1] == 4) {

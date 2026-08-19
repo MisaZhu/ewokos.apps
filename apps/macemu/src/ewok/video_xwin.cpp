@@ -140,6 +140,33 @@ static int resize_w = 0, resize_h = 0;
 static bool presented_once = false;
 static bool vbl_once = false;
 static uint64_t last_input_ms = 0;	// x thread only: last input event time
+static uint64_t last_present_ms = 0;	// x thread only: last guest-frame present
+#define PRESENT_INTERVAL_MS 16	// ~guest VBL cadence
+
+// Touch panels stream MOVE events at panel rate, far faster than the
+// guest consumes the absolute position (its cursor machinery runs at the
+// 60Hz VBL), and each injection costs an ADB dispatch plus a guest
+// cursor redraw.  Coalesce minivmac-style (its queue merges consecutive
+// position events): keep only the latest position and inject it at most
+// once per guest frame.  All fields here are x thread only.
+static bool move_pending = false;
+static int pending_mac_x = 0, pending_mac_y = 0;
+static int injected_mac_x = -1, injected_mac_y = -1;
+static uint64_t last_move_flush_ms = 0;
+#define MOVE_FLUSH_INTERVAL_MS 16	// ~guest VBL cadence
+
+static void flush_pending_move(void)
+{
+	if (!move_pending)
+		return;
+	move_pending = false;
+	if (pending_mac_x == injected_mac_x && pending_mac_y == injected_mac_y)
+		return;
+	injected_mac_x = pending_mac_x;
+	injected_mac_y = pending_mac_y;
+	last_move_flush_ms = kernel_tic_ms(0);
+	ADBMouseMoved(pending_mac_x, pending_mac_y);
+}
 
 // Dirty-row tracking: the guest draws straight into the_buffer with no
 // host-side hook, so every VBL compares it against a shadow copy and only
@@ -439,8 +466,16 @@ static void on_xwin_event(xwin_t *win, xevent_t *ev)
 		// edge made the guest cursor crawl along the border while the
 		// finger was really over dead space, wrecking drags.
 		if (mac_x >= 0 && mac_x < (int)MacScreenWidth &&
-			mac_y >= 0 && mac_y < (int)MacScreenHeight)
-			ADBMouseMoved(mac_x, mac_y);
+			mac_y >= 0 && mac_y < (int)MacScreenHeight) {
+			pending_mac_x = mac_x;
+			pending_mac_y = mac_y;
+			move_pending = true;
+			// A queued button edge snapshots the ADB position slot, so
+			// the freshest spot must reach it before DOWN/UP; plain
+			// moves go through the coalescing flush in xwin_loop.
+			if (ev->state == MOUSE_STATE_DOWN || ev->state == MOUSE_STATE_UP)
+				flush_pending_move();
+		}
 		if (ev->state == MOUSE_STATE_DOWN) {
 			ADBMouseDown(0);
 		} else if (ev->state == MOUSE_STATE_UP) {
@@ -587,21 +622,34 @@ static void xwin_loop(void *p)
 		xwin_hide_cursor(xwin, true);
 	}
 
+	// Deliver the latest coalesced mouse position at guest-VBL cadence
+	if (move_pending &&
+		kernel_tic_ms(0) - last_move_flush_ms >= MOVE_FLUSH_INTERVAL_MS)
+		flush_pending_move();
+
 	// Pick up freshly drawn guest rows (a moving cursor above all)
 	// without waiting for the next 60Hz VBL
 	scan_convert_rows();
 
+	// Present at most one frame per guest VBL.  xwin_repaint() ends in a
+	// synchronous UPDATE_REFRESH IPC to xserverd; while input flows this
+	// loop runs on a 5ms budget and could otherwise pile up inside that
+	// IPC faster than the server composites, stalling event polling
+	// behind it.  The guest only draws a new frame per VBL anyway, so
+	// faster presents are pure IPC load.
 	bool do_repaint = false;
-	pthread_mutex_lock(&frame_lock);
-	if (frame_pending) {
-		frame_pending = false;
-		present_top = dirty_top;
-		present_bottom = dirty_bottom;
-		dirty_top = DIRTY_NONE_TOP;
-		dirty_bottom = DIRTY_NONE_BOT;
-		do_repaint = true;
+	if (tik - last_present_ms >= PRESENT_INTERVAL_MS) {
+		pthread_mutex_lock(&frame_lock);
+		if (frame_pending) {
+			frame_pending = false;
+			present_top = dirty_top;
+			present_bottom = dirty_bottom;
+			dirty_top = DIRTY_NONE_TOP;
+			dirty_bottom = DIRTY_NONE_BOT;
+			do_repaint = true;
+		}
+		pthread_mutex_unlock(&frame_lock);
 	}
-	pthread_mutex_unlock(&frame_lock);
 
 	// A stale flag must never downgrade an externally triggered repaint
 	// (window exposed/moved/resized) to a dirty-rows-only one
@@ -613,6 +661,7 @@ static void xwin_loop(void *p)
 		}
 		incremental_repaint = true;
 		xwin_repaint(xwin);
+		last_present_ms = kernel_tic_ms(0);
 	}
 
 	uint64_t now = kernel_tic_ms(0);
@@ -944,6 +993,11 @@ void VideoInterrupt(void)
 		vbl_once = true;
 		printf("xwin: MacOS started, VBL running\n");
 	}
+
+	// Guest-VBL heartbeat for the ADB button-edge settle (adb.cpp):
+	// advances the settle gate and keeps queued edges dispatching at
+	// the guest's 60Hz cadence even when no further input arrives
+	ADBVBLTick();
 
 	scan_convert_rows();
 }

@@ -21,6 +21,7 @@
 #include "sysdeps.h"
 #include "macos_util.h"
 #include "timer.h"
+#include "main.h"						// InterruptFlags
 
 #include <errno.h>
 
@@ -372,8 +373,19 @@ void idle_wait(void)
 	UNLOCK_IDLE;
 #endif
 
-	// Fallback: sleep 10 ms
-	Delay_usec(10000);
+	// Fallback: sleep 1 ms.  EwokOS has no kernel-blocking cross-thread
+	// wakeup primitive (its pthread cond wait and sem_wait are user-space
+	// yield spins, so the cond/sem variants above stay disabled), which
+	// leaves idle_resume() unable to wake us.  A fixed 10 ms nap here
+	// quantized every guest-idle stage — tick/VBL processing, ADB
+	// dispatch, event pickup — into 10 ms steps, and the emulated Mac
+	// felt stuck whenever input was sparse (touchscreen taps); dense
+	// mouse input only masked it by keeping the guest out of the idle
+	// loop entirely.  1 ms keeps the idle quantum well below the 16.6 ms
+	// VBL period, and the guest idle loop re-checks for work between naps.
+	if (InterruptFlags != 0)
+		return;
+	Delay_usec(1000);
 #endif
 }
 

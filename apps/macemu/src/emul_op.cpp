@@ -487,8 +487,6 @@ void EmulOp(uint16 opcode, M68kRegisters *r)
 			r->d[0] = 0;
 
 			if (InterruptFlags & INTFLAG_60HZ) {
-				static bool seen = false;
-				if (!seen) { seen = true; printf("boot: first 60Hz IRQ\n"); }
 				ClearInterruptFlag(INTFLAG_60HZ);
 
 				// Increment Ticks variable
@@ -542,6 +540,8 @@ void EmulOp(uint16 opcode, M68kRegisters *r)
 				ClearInterruptFlag(INTFLAG_ADB);
 				if (HasMacStarted())
 					ADBInterrupt();
+				else
+					ADBFlush();	// guest can't service ADB yet: drop, don't queue up stale taps
 			}
 
 			if (InterruptFlags & INTFLAG_NMI) {

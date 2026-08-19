@@ -2018,10 +2018,11 @@ static void on_xwin_event(xwin_t* win, xevent_t* ev) {
     }
 }
 
+static graph_t* scaled = NULL;
 static void on_xwin_repaint(xwin_t* win, graph_t* g) {
     if (g == NULL)
         return;
-
+    
     screen_graph = g;
     window_width = g->w;
     window_height = g->h;
@@ -2048,10 +2049,15 @@ static void on_xwin_repaint(xwin_t* win, graph_t* g) {
         display_offset_y = offset_y;
 
         if (scale > 1) {
-            graph_t* scaled = graph_scalef_fast(screen_buffer, scale);
+            if (scaled == NULL || scaled->w != scaled_w || scaled->h != scaled_h) {
+                graph_t* tmp = graph_new(NULL, scaled_w, scaled_h);
+                if(scaled != NULL)
+                    graph_free(scaled);
+                scaled = tmp;
+            }
             if (scaled != NULL) {
+                graph_scale_tof_fast(screen_buffer, scaled, scale);
                 graph_blt(scaled, 0, 0, scaled_w, scaled_h, g, offset_x, offset_y, scaled_w, scaled_h);
-                graph_free(scaled);
             }
         } else {
             if (offset_x > 0 || offset_y > 0) {
@@ -2664,6 +2670,9 @@ int main(int argc, char **argv)
         x_run(x_context, xwin);
         StopEmuThread();
     }
+    if(scaled != NULL)
+        graph_free(scaled);
+
     UnInitOSGLU();
 
     return 0;

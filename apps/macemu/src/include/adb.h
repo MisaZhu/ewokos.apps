@@ -34,6 +34,8 @@ extern void ADBKeyDown(int code);
 extern void ADBKeyUp(int code);
 
 extern void ADBInterrupt(void);
+extern void ADBFlush(void);
+extern void ADBVBLTick(void);
 
 extern void ADBSetRelMouseMode(bool relative);
 
