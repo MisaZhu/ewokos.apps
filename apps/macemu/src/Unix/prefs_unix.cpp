@@ -27,6 +27,8 @@
 #include <sys/stat.h>
 
 #include <ewoksys/cmain.h>
+#include <ewoksys/session.h>
+#include <ewoksys/kernel_tic.h>
 
 #include <string>
 using std::string;
@@ -60,8 +62,13 @@ static string prefs_path;
 /*
  *  Auto-detect assets shipped next to the executable (EwokOS):
  *  if the configured "rom" does not exist, use the first regular file in
- *  <app dir>/res/roms; add every regular file in <app dir>/res/disks as a
- *  "disk" volume unless it is already listed.
+ *  <app dir>/res/roms; every regular file in <app dir>/res/disks gets a
+ *  copy in <home>/docs/macemu/disks (like minivmac) which is added as a
+ *  "disk" volume unless it is already listed, so guest writes persist.
+ *  Missing user copies are not created here (LoadPrefs runs before the
+ *  window exists); they are recorded and copied by
+ *  AssetsPrepareUserDisks() once the window is visible, with a copy
+ *  icon shown in the window while it runs.
  */
 
 static bool is_regular_file(const char *path)
@@ -97,6 +104,126 @@ static bool is_supported_rom(const char *path)
 		close(fd);
 	}
 	return ok;
+}
+
+static size_t write_all_fd(int fd, const void *buffer, size_t count)
+{
+	size_t total = 0;
+
+	while (total < count) {
+		ssize_t nwritten = write(fd, (const char *)buffer + total,
+			count - total);
+		if (nwritten <= 0)
+			break;
+		total += (size_t)nwritten;
+	}
+
+	return total;
+}
+
+static bool ensure_dir_exists(const char *path)
+{
+	char tmp[512];
+	char *p;
+
+	if (path == NULL || path[0] == '\0')
+		return false;
+
+	snprintf(tmp, sizeof(tmp), "%s", path);
+	for (p = tmp + 1; *p != '\0'; ++p) {
+		if (*p != '/')
+			continue;
+		*p = '\0';
+		if (access(tmp, F_OK) != 0 && mkdir(tmp, 0755) != 0) {
+			*p = '/';
+			return false;
+		}
+		*p = '/';
+	}
+
+	if (access(tmp, F_OK) != 0 && mkdir(tmp, 0755) != 0)
+		return false;
+	return true;
+}
+
+typedef void (*copy_progress_fn)(off_t done, off_t file_size, void *arg);
+
+static bool copy_file_if_needed(const char *src_path, const char *dst_path,
+	copy_progress_fn progress, void *arg)
+{
+	char buffer[1024*32];
+	ssize_t nread;
+	struct stat st;
+	off_t copied = 0;
+	off_t file_size = 0;
+
+	if (access(dst_path, F_OK) == 0)
+		return true;
+
+	int src_fd = open(src_path, O_RDONLY);
+	if (src_fd < 0)
+		return false;
+	if (fstat(src_fd, &st) == 0)
+		file_size = st.st_size;
+
+	int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+	if (dst_fd < 0) {
+		close(src_fd);
+		return false;
+	}
+
+	while ((nread = read(src_fd, buffer, sizeof(buffer))) > 0) {
+		if (write_all_fd(dst_fd, buffer, (size_t)nread) != (size_t)nread) {
+			close(dst_fd);
+			close(src_fd);
+			unlink(dst_path);
+			return false;
+		}
+		copied += nread;
+		if (progress != NULL)
+			progress(copied, file_size, arg);
+	}
+
+	if (nread < 0) {
+		close(dst_fd);
+		close(src_fd);
+		unlink(dst_path);
+		return false;
+	}
+
+	if (close(dst_fd) != 0) {
+		close(src_fd);
+		unlink(dst_path);
+		return false;
+	}
+	if (close(src_fd) != 0) {
+		unlink(dst_path);
+		return false;
+	}
+	return true;
+}
+
+// Shipped disks whose user copy does not exist yet: recorded by
+// autodetect_assets() and created by AssetsPrepareUserDisks() once the
+// window is visible
+#define MAX_PENDING_DISKS 16
+static char pending_disk_names[MAX_PENDING_DISKS][256];
+static int pending_disk_count = 0;
+static char pending_src_dir[256];
+static char pending_dst_dir[256];
+
+static bool get_user_disks_dir(char *path, size_t size)
+{
+	session_info_t sinfo;
+
+	if (path == NULL || size == 0)
+		return false;
+
+	if (session_get_by_uid(getuid(), &sinfo) != 0 || sinfo.home[0] == 0)
+		return false;
+
+	snprintf(path, size, "%s/docs/macemu/disks", sinfo.home);
+	return true;
 }
 
 static void autodetect_assets(void)
@@ -143,34 +270,168 @@ static void autodetect_assets(void)
 		}
 	}
 
-	// Disk volumes
+	// Disk volumes: prefer a writable copy in <home>/docs/macemu/disks
+	// (like minivmac), so guest writes persist.  Missing user copies are
+	// deferred to AssetsPrepareUserDisks() which runs once the window is
+	// visible; the prefs already point at the future user copy, and
+	// AssetsPrepareUserDisks() finishes before DiskInit() opens the drives.
 	char disks_dir[256];
+	char user_disks_dir[256];
 	snprintf(disks_dir, sizeof(disks_dir), "%s/disks", res_dir);
+	if (!get_user_disks_dir(user_disks_dir, sizeof(user_disks_dir)))
+		user_disks_dir[0] = '\0';
 	DIR *d = opendir(disks_dir);
 	if (d != NULL) {
 		struct dirent *de;
 		while ((de = readdir(d)) != NULL) {
 			if (de->d_name[0] == '.')
 				continue;
-			char path[256];
-			snprintf(path, sizeof(path), "%s/%s", disks_dir, de->d_name);
-			if (!is_regular_file(path))
+			char src_path[512];
+			snprintf(src_path, sizeof(src_path), "%s/%s", disks_dir, de->d_name);
+			if (!is_regular_file(src_path))
 				continue;
+
+			// Prefer the writable user copy; fall back to the shipped file
+			char user_path[512];
+			const char *mount_path = src_path;
+			if (user_disks_dir[0] != '\0') {
+				snprintf(user_path, sizeof(user_path), "%s/%s",
+					user_disks_dir, de->d_name);
+				if (is_regular_file(user_path)) {
+					mount_path = user_path;
+				} else if (pending_disk_count < MAX_PENDING_DISKS) {
+					// No user copy yet: create it once the window is up
+					snprintf(pending_disk_names[pending_disk_count],
+						sizeof(pending_disk_names[0]), "%s", de->d_name);
+					snprintf(pending_src_dir, sizeof(pending_src_dir),
+						"%s", disks_dir);
+					snprintf(pending_dst_dir, sizeof(pending_dst_dir),
+						"%s", user_disks_dir);
+					pending_disk_count++;
+					mount_path = user_path;
+				}
+			}
+
 			bool listed = false;
 			for (int i = 0; ; i++) {
 				const char *p = PrefsFindString("disk", i);
 				if (p == NULL)
 					break;
-				if (strcmp(p, path) == 0) {
+				if (strcmp(p, mount_path) == 0) {
+					listed = true;
+					break;
+				}
+				if (mount_path != src_path && strcmp(p, src_path) == 0) {
+					// Migrate a stale res/disks entry to the user copy
+					PrefsReplaceString("disk", mount_path, i);
 					listed = true;
 					break;
 				}
 			}
 			if (!listed)
-				PrefsAddString("disk", path);
+				PrefsAddString("disk", mount_path);
 		}
 		closedir(d);
 	}
+}
+
+
+/*
+ *  Deferred copy of the shipped disk images into the user directory
+ *  (EwokOS).  Called from InitAll() after the window is visible and
+ *  before DiskInit() opens the drives, so the "disk" prefs already
+ *  point at the user copies when they are mounted.  A "copying disk"
+ *  icon with byte progress (video_xwin.cpp) is shown while it runs.
+ *  On failure the affected "disk" entry falls back to the shipped file.
+ */
+
+// video_xwin.cpp splash: done/total bytes across all pending images,
+// total <= 0 hides it again
+extern void VideoDiskCopySplash(int done, int total);
+
+static off_t copy_base_bytes = 0;
+static off_t copy_total_bytes = 0;
+static uint64_t copy_last_splash_ms = 0;
+
+static void copy_progress_cb(off_t done, off_t file_size, void *arg)
+{
+	(void)arg;
+	// A repaint is a synchronous IPC to the x server: throttle it
+	uint64_t now = kernel_tic_ms(0);
+	if (done != file_size && now - copy_last_splash_ms < 80)
+		return;
+	copy_last_splash_ms = now;
+	off_t all = copy_base_bytes + done;
+	if (all > copy_total_bytes)
+		all = copy_total_bytes;
+	VideoDiskCopySplash((int)all, (int)copy_total_bytes);
+}
+
+static void fallback_disk_pref(const char *disk_name)
+{
+	char src_path[512];
+	char user_path[512];
+
+	snprintf(src_path, sizeof(src_path), "%s/%s", pending_src_dir, disk_name);
+	snprintf(user_path, sizeof(user_path), "%s/%s", pending_dst_dir, disk_name);
+	for (int i = 0; ; i++) {
+		const char *p = PrefsFindString("disk", i);
+		if (p == NULL)
+			break;
+		if (strcmp(p, user_path) == 0) {
+			PrefsReplaceString("disk", src_path, i);
+			break;
+		}
+	}
+}
+
+void AssetsPrepareUserDisks(void)
+{
+	if (pending_disk_count == 0)
+		return;
+
+	if (!ensure_dir_exists(pending_dst_dir)) {
+		for (int i = 0; i < pending_disk_count; i++)
+			fallback_disk_pref(pending_disk_names[i]);
+		pending_disk_count = 0;
+		return;
+	}
+
+	copy_total_bytes = 0;
+	for (int i = 0; i < pending_disk_count; i++) {
+		char src_path[512];
+		struct stat st;
+		snprintf(src_path, sizeof(src_path), "%s/%s",
+			pending_src_dir, pending_disk_names[i]);
+		if (stat(src_path, &st) == 0)
+			copy_total_bytes += st.st_size;
+	}
+
+	copy_base_bytes = 0;
+	copy_last_splash_ms = 0;
+	VideoDiskCopySplash(0, (int)copy_total_bytes);
+	printf("copying %d disk image(s) to %s\n",
+		pending_disk_count, pending_dst_dir);
+
+	for (int i = 0; i < pending_disk_count; i++) {
+		char src_path[512];
+		char dst_path[512];
+		struct stat st;
+		snprintf(src_path, sizeof(src_path), "%s/%s",
+			pending_src_dir, pending_disk_names[i]);
+		snprintf(dst_path, sizeof(dst_path), "%s/%s",
+			pending_dst_dir, pending_disk_names[i]);
+		if (!copy_file_if_needed(src_path, dst_path, copy_progress_cb, NULL)) {
+			printf("WARNING: cannot copy %s to %s, using the shipped file\n",
+				src_path, dst_path);
+			fallback_disk_pref(pending_disk_names[i]);
+		}
+		if (stat(src_path, &st) == 0)
+			copy_base_bytes += st.st_size;
+	}
+
+	VideoDiskCopySplash(0, 0);
+	pending_disk_count = 0;
 }
 
 

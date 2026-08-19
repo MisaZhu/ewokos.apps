@@ -127,8 +127,6 @@ static volatile bool emerg_quit = false;
 static float view_scale = 1.0f;
 static int view_offset_x = 0;
 static int view_offset_y = 0;
-static int last_mac_x = -1, last_mac_y = -1;
-
 static x_t *x_context = NULL;
 static xwin_t *xwin = NULL;
 static pthread_t emul_thread_id = 0;
@@ -141,6 +139,116 @@ static volatile bool resize_pending = false;
 static int resize_w = 0, resize_h = 0;
 static bool presented_once = false;
 static bool vbl_once = false;
+static uint64_t last_input_ms = 0;	// x thread only: last input event time
+
+// Dirty-row tracking: the guest draws straight into the_buffer with no
+// host-side hook, so every VBL compares it against a shadow copy and only
+// reconverts the rows that actually changed.  A static frame then costs one
+// memcmp pass instead of a full-screen palette expansion, and the repaint
+// plus UPDATE IPC below is skipped entirely.
+static uint8 *the_shadow = NULL;
+#define DIRTY_NONE_TOP   0x7fffffff
+#define DIRTY_NONE_BOT   (-1)
+static volatile int dirty_top = DIRTY_NONE_TOP;	// rows pending present (frame_lock)
+static volatile int dirty_bottom = DIRTY_NONE_BOT;
+static volatile bool force_full = true;			// palette/mode change: reconvert all rows
+static int present_top = DIRTY_NONE_TOP;		// snapshot of dirty_top, x thread only
+static int present_bottom = DIRTY_NONE_BOT;
+static bool incremental_repaint = false;		// x thread only: present just the dirty rows
+
+// Nearest-neighbour upscale tables (scale > 1), rebuilt only when the window
+// layout changes; replaces the per-frame malloc/free of graph_scalef_fast
+// in the repaint path.
+static int *xmap = NULL, *ymap = NULL;
+static int xmap_len = 0, ymap_len = 0;
+static float last_scale = 0.0f;
+static int last_gw = 0, last_gh = 0, last_ox = 0, last_oy = 0;
+
+/*
+ *  Pre-boot "copying disk" splash: while AssetsPrepareUserDisks()
+ *  (prefs_unix.cpp) copies the shipped disk images into the user
+ *  directory the window is already up but the guest is not running yet,
+ *  so show a disk-copy icon with a progress bar instead of the (still
+ *  black) guest frame.
+ */
+
+static bool copy_splash = false;
+static int copy_splash_done = 0;
+static int copy_splash_total = 0;
+
+#define SPLASH_BG      0xff151515
+#define SPLASH_FG      0xffb8b8b8
+#define SPLASH_SHUTTER 0xff5a5a5a
+#define SPLASH_LABEL   0xfff2f2f2
+#define SPLASH_TRACK   0xff3c3c3c
+
+static void draw_floppy(graph_t *g, int x, int y, int s)
+{
+	// Body
+	graph_fill_round(g, x, y, s, s, s/10, SPLASH_FG);
+	// Metal shutter with its slider slot
+	int sw = s*3/7, sh = s*2/7;
+	int sx = x + (s - sw)/2 + s/12;
+	graph_fill_rect(g, sx, y, sw, sh, SPLASH_SHUTTER);
+	graph_fill_rect(g, sx + sw/6, y + sh/8, sw/5, sh*3/4, SPLASH_BG);
+	// Label with two ruled lines
+	int lw = s*5/7, lh = s*2/5;
+	int lx = x + (s - lw)/2, ly = y + s*11/20;
+	int lh1 = (lh/12 > 1) ? lh/12 : 1;
+	graph_fill_rect(g, lx, ly, lw, lh, SPLASH_LABEL);
+	graph_fill_rect(g, lx + lw/8, ly + lh/3, lw*3/4, lh1, SPLASH_SHUTTER);
+	graph_fill_rect(g, lx + lw/8, ly + lh*2/3, lw*3/4, lh1, SPLASH_SHUTTER);
+}
+
+static void draw_copy_arrow(graph_t *g, int x, int cy, int s)
+{
+	int shaft_h = (s/8 > 2) ? s/8 : 2;
+	int shaft_len = s/4;
+	int head_len = s/5;
+	int head_h = s/3;
+
+	graph_fill_rect(g, x, cy - shaft_h/2, shaft_len, shaft_h, SPLASH_FG);
+	// Triangle head built from 1px columns (no polygon fill in the graph lib)
+	int ax = x + shaft_len;
+	for (int i = 0; i < head_len; i++) {
+		int hh = head_h * (head_len - i) / head_len;
+		graph_fill_rect(g, ax + i, cy - hh/2, 1, hh, SPLASH_FG);
+	}
+}
+
+static void draw_copy_splash(graph_t *g)
+{
+	int gw = g->w, gh = g->h;
+	graph_fill_rect(g, 0, 0, gw, gh, SPLASH_BG);
+
+	// Icon size follows the window, like the letterboxed guest frame does
+	int s = ((gw < gh) ? gw : gh) / 6;
+	if (s < 40) s = 40;
+	if (s > 96) s = 96;
+
+	int gap = s/4;
+	int arrow_len = s/4 + s/5;	// shaft + head
+	int total_w = s + gap + arrow_len + gap + s;
+	int bar_h = (s/10 > 4) ? s/10 : 4;
+	int block_h = s + s/5 + bar_h;
+
+	int x0 = (gw - total_w)/2;
+	int y0 = (gh - block_h)/2;
+	int cy = y0 + s/2;
+
+	draw_floppy(g, x0, y0, s);
+	draw_copy_arrow(g, x0 + s + gap, cy, s);
+	draw_floppy(g, x0 + s + gap + arrow_len + gap, y0, s);
+
+	// Byte progress across all pending disk images
+	int by = y0 + s + s/5;
+	graph_fill_round(g, x0, by, total_w, bar_h, bar_h/2, SPLASH_TRACK);
+	if (copy_splash_total > 0) {
+		int fw = (int)((long long)total_w * copy_splash_done / copy_splash_total);
+		if (fw > bar_h)
+			graph_fill_round(g, x0, by, fw, bar_h, bar_h/2, SPLASH_FG);
+	}
+}
 
 /*
  *  monitor_desc subclass for the xwin display
@@ -160,14 +268,17 @@ public:
  *  Frame conversion: Mac layout (big-endian) -> host ARGB8888
  */
 
-static void convert_frame(void)
+static void convert_rows(uint32 y0, uint32 y1)
 {
 	if (frame_graph == NULL || the_buffer == NULL)
 		return;
 
 	const video_mode &mode = VideoMonitors[0]->get_current_mode();
 	uint32 w = mode.x, h = mode.y, bpr = mode.bytes_per_row;
-	uint32 *dst = frame_graph->buffer;
+	if (y0 >= h)
+		return;
+	uint32 y_end = (y1 < h - 1) ? y1 : h - 1;
+	uint32 *dst = frame_graph->buffer + y0 * w;
 
 	switch (mode.depth) {
 	case VDEPTH_1BIT:
@@ -181,7 +292,7 @@ static void convert_frame(void)
 		case VDEPTH_4BIT: ppb = 2; bpp = 4; mask = 15; break;
 		default:          ppb = 1; bpp = 8; mask = 255; break;
 		}
-		for (uint32 y = 0; y < h; y++) {
+		for (uint32 y = y0; y <= y_end; y++) {
 			const uint8 *src = the_buffer + y * bpr;
 			for (uint32 x = 0; x < w; x++) {
 				int idx;
@@ -202,7 +313,7 @@ static void convert_frame(void)
 	}
 	case VDEPTH_16BIT:
 		// Mac 16-bit = big-endian RGB555
-		for (uint32 y = 0; y < h; y++) {
+		for (uint32 y = y0; y <= y_end; y++) {
 			const uint8 *src = the_buffer + y * bpr;
 			for (uint32 x = 0; x < w; x++) {
 				uint32 v = (src[x * 2] << 8) | src[x * 2 + 1];
@@ -219,7 +330,7 @@ static void convert_frame(void)
 		break;
 	case VDEPTH_32BIT:
 		// Mac 32-bit = big-endian xRGB: bytes [00][RR][GG][BB]
-		for (uint32 y = 0; y < h; y++) {
+		for (uint32 y = y0; y <= y_end; y++) {
 			const uint8 *src = the_buffer + y * bpr;
 			for (uint32 x = 0; x < w; x++) {
 				dst[x] = 0xff000000 | (src[x * 4 + 1] << 16) | (src[x * 4 + 2] << 8) | src[x * 4 + 3];
@@ -228,6 +339,61 @@ static void convert_frame(void)
 		}
 		break;
 	}
+}
+
+/*
+ *  Scan the guest frame for changed rows, convert them and merge them
+ *  into the pending present range.  Called from both the 68k thread
+ *  (VBL) and the x thread (input-paced polling), so the whole scan
+ *  runs under frame_lock: a concurrent switch_to_current_mode() frees
+ *  and reallocates the_buffer under the same lock, and reading a stale
+ *  pointer mid-scan must be impossible.  The compare may still race
+ *  with the guest drawing a row (it never takes the lock); a torn row
+ *  is latched into the_shadow converted half-done, but then the guest
+ *  finishes the row, it differs again and the next scan reconverts it
+ *  — self-healing by construction.
+ */
+static void scan_convert_rows(void)
+{
+	pthread_mutex_lock(&frame_lock);
+	if (MacFrameBaseHost == NULL || the_buffer == NULL || frame_graph == NULL) {
+		pthread_mutex_unlock(&frame_lock);
+		return;
+	}
+
+	const video_mode &mode = VideoMonitors[0]->get_current_mode();
+	uint32 h = mode.y, bpr = mode.bytes_per_row;
+	uint32 top = 0, bottom = h - 1;
+	// No shadow (alloc failed): degrade to a full-frame convert, exactly
+	// the old behaviour
+	if (!force_full && the_shadow != NULL) {
+		top = h;
+		bottom = 0;
+		for (uint32 y = 0; y < h; y++) {
+			if (memcmp(the_buffer + y * bpr, the_shadow + y * bpr, bpr) != 0) {
+				if (y < top) top = y;
+				bottom = y;
+			}
+		}
+	}
+	force_full = false;
+
+	if (bottom >= top) {
+		convert_rows(top, bottom);
+		if (the_shadow != NULL) {
+			for (uint32 y = top; y <= bottom; y++)
+				memcpy(the_shadow + y * bpr, the_buffer + y * bpr, bpr);
+		}
+		if (frame_pending) {	// previous range not presented yet: merge
+			if ((int)top < dirty_top) dirty_top = (int)top;
+			if ((int)bottom > dirty_bottom) dirty_bottom = (int)bottom;
+		} else {
+			dirty_top = (int)top;
+			dirty_bottom = (int)bottom;
+			frame_pending = true;
+		}
+	}
+	pthread_mutex_unlock(&frame_lock);
 }
 
 /*
@@ -245,6 +411,7 @@ static void on_xwin_event(xwin_t *win, xevent_t *ev)
 
 	switch (ev->type) {
 	case XEVT_IM: {
+		last_input_ms = kernel_tic_ms(0);
 		int code = xwin_key2adb(ev->value.im.key_code);
 		if (code >= 0) {
 			if (ev->state == XIM_STATE_PRESS)
@@ -255,22 +422,29 @@ static void on_xwin_event(xwin_t *win, xevent_t *ev)
 		break;
 	}
 	case XEVT_MOUSE: {
+		last_input_ms = kernel_tic_ms(0);
+		// Absolute position sync, minivmac-style: set the Mac cursor to
+		// wherever the host cursor points inside our window.  Relative
+		// deltas would slowly drift away from the host cursor (events are
+		// not delivered while the host cursor is outside the window, and
+		// the ADB packet encodes deltas in 7 bits), while the guest cursor
+		// is the only one visible here (the host cursor is hidden), so it
+		// must always match the real mouse position.  ADBMouseMoved()
+		// takes absolute Mac coordinates in this mode (see VideoInit).
 		gpos_t pos = xwin_get_inside_pos(win, ev->value.mouse.x, ev->value.mouse.y);
+		int mac_x = (int)((pos.x - view_offset_x) / view_scale);
+		int mac_y = (int)((pos.y - view_offset_y) / view_scale);
+		// minivmac semantics: only notify positions that land inside the
+		// Mac screen.  Clamping letterbox/margin touches to the screen
+		// edge made the guest cursor crawl along the border while the
+		// finger was really over dead space, wrecking drags.
+		if (mac_x >= 0 && mac_x < (int)MacScreenWidth &&
+			mac_y >= 0 && mac_y < (int)MacScreenHeight)
+			ADBMouseMoved(mac_x, mac_y);
 		if (ev->state == MOUSE_STATE_DOWN) {
 			ADBMouseDown(0);
 		} else if (ev->state == MOUSE_STATE_UP) {
 			ADBMouseUp(0);
-		} else if (ev->state == MOUSE_STATE_MOVE) {
-			int mac_x = (int)((pos.x - view_offset_x) / view_scale);
-			int mac_y = (int)((pos.y - view_offset_y) / view_scale);
-			if (last_mac_x >= 0) {
-				int dx = mac_x - last_mac_x;
-				int dy = mac_y - last_mac_y;
-				if (dx || dy)
-					ADBMouseMoved(dx, dy);
-			}
-			last_mac_x = mac_x;
-			last_mac_y = mac_y;
 		}
 		break;
 	}
@@ -286,20 +460,32 @@ static void on_xwin_event(xwin_t *win, xevent_t *ev)
 
 static void on_xwin_repaint(xwin_t *win, graph_t *g)
 {
+	(void)win;
 	if (g == NULL)
 		return;
 
-	graph_fill_rect(g, 0, 0, g->w, g->h, 0xff000000);
+	// Pre-boot disk-copy splash replaces the (still empty) guest frame
+	if (copy_splash) {
+		draw_copy_splash(g);
+		return;
+	}
+
+	// Repaints coming from the VBL path only push the dirty rows;
+	// everything else (window exposed, moved, resized, ...) must redraw
+	// the whole frame.
+	bool incremental = incremental_repaint;
+	incremental_repaint = false;
 
 	pthread_mutex_lock(&frame_lock);
 	if (frame_graph != NULL && frame_graph->buffer != NULL) {
-		float scale_x = (float)g->w / frame_graph->w;
-		float scale_y = (float)g->h / frame_graph->h;
+		int fw = frame_graph->w, fh = frame_graph->h;
+		float scale_x = (float)g->w / fw;
+		float scale_y = (float)g->h / fh;
 		float scale = (scale_x < scale_y) ? scale_x : scale_y;
 		if (scale < 1.0f) scale = 1.0f;
 
-		int scaled_w = (int)(frame_graph->w * scale);
-		int scaled_h = (int)(frame_graph->h * scale);
+		int scaled_w = (int)(fw * scale);
+		int scaled_h = (int)(fh * scale);
 		int offset_x = (g->w - scaled_w) / 2;
 		int offset_y = (g->h - scaled_h) / 2;
 
@@ -307,15 +493,76 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 		view_offset_x = offset_x;
 		view_offset_y = offset_y;
 
-		if (scale > 1.0f) {
-			graph_t *scaled = graph_scalef_fast(frame_graph, scale);
-			if (scaled != NULL) {
-				graph_blt(scaled, 0, 0, scaled_w, scaled_h, g, offset_x, offset_y, scaled_w, scaled_h);
-				graph_free(scaled);
+		bool layout_changed =
+			last_gw != g->w || last_gh != g->h || last_scale != scale ||
+			last_ox != offset_x || last_oy != offset_y;
+		if (layout_changed) {
+			// Window geometry changed: clear the letterbox once, rebuild
+			// the upscale tables and redraw everything below.
+			graph_fill_rect(g, 0, 0, g->w, g->h, 0xff000000);
+			if (xmap == NULL || xmap_len != scaled_w) {
+				free(xmap);
+				xmap = (int *)malloc((uint32)scaled_w * sizeof(int));
+				xmap_len = xmap != NULL ? scaled_w : 0;
 			}
+			if (ymap == NULL || ymap_len != scaled_h) {
+				free(ymap);
+				ymap = (int *)malloc((uint32)scaled_h * sizeof(int));
+				ymap_len = ymap != NULL ? scaled_h : 0;
+			}
+			if (xmap != NULL && ymap != NULL) {
+				for (int i = 0; i < scaled_w; i++) {
+					int sx = (int)(((float)i + 0.5f) / scale);
+					if (sx < 0) sx = 0;
+					if (sx >= fw) sx = fw - 1;
+					xmap[i] = sx;
+				}
+				for (int j = 0; j < scaled_h; j++) {
+					int sy = (int)(((float)j + 0.5f) / scale);
+					if (sy < 0) sy = 0;
+					if (sy >= fh) sy = fh - 1;
+					ymap[j] = sy;
+				}
+			}
+			last_gw = g->w; last_gh = g->h;
+			last_scale = scale; last_ox = offset_x; last_oy = offset_y;
+		}
+
+		int top, bottom;
+		if (incremental && !layout_changed) {
+			top = present_top;
+			bottom = present_bottom;
 		} else {
-			graph_blt(frame_graph, 0, 0, frame_graph->w, frame_graph->h,
-				g, offset_x, offset_y, frame_graph->w, frame_graph->h);
+			top = 0;
+			bottom = fh - 1;
+		}
+		present_top = DIRTY_NONE_TOP;
+		present_bottom = DIRTY_NONE_BOT;
+
+		if (top >= 0 && top < fh && bottom >= top) {
+			if (bottom > fh - 1) bottom = fh - 1;
+
+			if (scale > 1.0f) {
+				// Nearest-neighbour rows (centre sampling): only the
+				// destination rows the dirty band maps onto are touched,
+				// so a moving cursor costs a few dozen rows instead of
+				// the whole upscaled frame.
+				if (xmap != NULL && ymap != NULL) {
+					int dy0 = offset_y + (int)((float)top * scale);
+					int dy1 = offset_y + (int)(((float)bottom + 1.0f) * scale + 0.99f) - 1;
+					if (dy0 < offset_y) dy0 = offset_y;
+					if (dy1 > offset_y + scaled_h - 1) dy1 = offset_y + scaled_h - 1;
+					for (int dy = dy0; dy <= dy1; dy++) {
+						const uint32 *srow = frame_graph->buffer + (uint32)ymap[dy - offset_y] * fw;
+						uint32 *drow = g->buffer + (uint32)dy * g->w + offset_x;
+						for (int dx = 0; dx < scaled_w; dx++)
+							drow[dx] = srow[xmap[dx]];
+					}
+				}
+			} else {
+				graph_blt(frame_graph, 0, top, fw, bottom - top + 1,
+					g, offset_x, offset_y + top, fw, bottom - top + 1);
+			}
 		}
 	}
 	pthread_mutex_unlock(&frame_lock);
@@ -340,25 +587,43 @@ static void xwin_loop(void *p)
 		xwin_hide_cursor(xwin, true);
 	}
 
+	// Pick up freshly drawn guest rows (a moving cursor above all)
+	// without waiting for the next 60Hz VBL
+	scan_convert_rows();
+
 	bool do_repaint = false;
 	pthread_mutex_lock(&frame_lock);
 	if (frame_pending) {
 		frame_pending = false;
+		present_top = dirty_top;
+		present_bottom = dirty_bottom;
+		dirty_top = DIRTY_NONE_TOP;
+		dirty_bottom = DIRTY_NONE_BOT;
 		do_repaint = true;
 	}
 	pthread_mutex_unlock(&frame_lock);
 
+	// A stale flag must never downgrade an externally triggered repaint
+	// (window exposed/moved/resized) to a dirty-rows-only one
+	incremental_repaint = false;
 	if (do_repaint && xwin != NULL) {
 		if (!presented_once) {
 			presented_once = true;
 			printf("xwin: presenting guest frames\n");
 		}
+		incremental_repaint = true;
 		xwin_repaint(xwin);
 	}
 
-	uint32_t gap = (uint32_t)(kernel_tic_ms(0) - tik);
-	if (gap < 1000 / 60)
-		proc_usleep((1000 / 60 - gap) * 1000);
+	uint64_t now = kernel_tic_ms(0);
+	uint32_t gap = (uint32_t)(now - tik);
+	// 5ms cadence while input is flowing (dragging): the mouse -> ADB ->
+	// guest draw -> convert -> present chain then settles within ~1 frame
+	// instead of stacking up to five.  Idle: back to the 60Hz VBL pace.
+	uint32_t budget =
+		(last_input_ms != 0 && now - last_input_ms < 100) ? 5 : 1000 / 60;
+	if (gap < budget)
+		proc_usleep((budget - gap) * 1000);
 }
 
 static void *emul_thread_func(void *arg)
@@ -409,6 +674,8 @@ void XWIN_monitor_desc::switch_to_current_mode(void)
 	pthread_mutex_lock(&frame_lock);
 
 	free(the_buffer);
+	free(the_shadow);
+	the_shadow = NULL;
 	the_buffer_size = (height + 2) * bpr;
 	// memory_init maps (MacFrameSize >> 16) + 1 64K banks, so back the
 	// whole mapped range; edge writes must not run past the allocation
@@ -418,6 +685,9 @@ void XWIN_monitor_desc::switch_to_current_mode(void)
 		ErrorAlert(STR_NO_MEM_ERR);
 		QuitEmulator();
 	}
+	// Shadow copy for the dirty-row compare; NULL just falls back to a
+	// full-frame convert every VBL
+	the_shadow = (uint8 *)calloc(1, ((the_buffer_size >> 16) + 1) << 16);
 
 	if (frame_graph != NULL)
 		graph_free(frame_graph);
@@ -429,6 +699,15 @@ void XWIN_monitor_desc::switch_to_current_mode(void)
 	MacFrameLayout = FLAYOUT_DIRECT;
 	MacScreenWidth = width;
 	MacScreenHeight = height;
+
+	// New mode: everything must be reconverted and represented
+	force_full = true;
+	frame_pending = false;
+	dirty_top = DIRTY_NONE_TOP;
+	dirty_bottom = DIRTY_NONE_BOT;
+	present_top = DIRTY_NONE_TOP;
+	present_bottom = DIRTY_NONE_BOT;
+	incremental_repaint = false;
 
 	if (TwentyFourBitAddressing)
 		set_mac_frame_base(MacFrameBaseMac24Bit);
@@ -447,7 +726,6 @@ void XWIN_monitor_desc::switch_to_current_mode(void)
 		resize_h = height;
 		resize_pending = true;
 	}
-	last_mac_x = last_mac_y = -1;
 
 	printf("xwin: guest video mode %dx%d depth %d\n",
 	       (int)width, (int)height, (int)mode.depth);
@@ -462,6 +740,8 @@ void XWIN_monitor_desc::set_palette(uint8 *pal, int num)
 		frame_pal[i * 3 + 1] = pal[c * 3 + 1];
 		frame_pal[i * 3 + 2] = pal[c * 3 + 2];
 	}
+	// Rows already converted used the old palette: reconvert them all
+	force_full = true;
 	pthread_mutex_unlock(&frame_lock);
 }
 
@@ -574,6 +854,17 @@ bool VideoInit(bool classic)
 	XWIN_monitor_desc *monitor = new XWIN_monitor_desc(modes, default_depth, 0x80);
 	VideoMonitors.push_back(monitor);
 
+	// Allocate the initial frame buffer and publish its base now: the
+	// slot ROM (InstallSlotROM(), called later from PatchROM()) records
+	// this base as minorBase, and memory_init() maps the frame24 banks
+	// and computes FrameBaseDiff from MacFrameBaseHost/MacFrameSize.
+	// Deferring this to the guest's first cscSetMode (as before) leaves
+	// a window in which the slot ROM advertises a frame buffer at
+	// address 0 and the guest's boot gray-screen fill wipes low memory
+	// (vector table, globals, system heap start).  The SDL2 backends
+	// publish the base from their monitor init the same way.
+	monitor->switch_to_current_mode();
+
 	// Default palette: gray ramp
 	for (int i = 0; i < 256; i++)
 		frame_pal[i * 3 + 0] = frame_pal[i * 3 + 1] = frame_pal[i * 3 + 2] = i;
@@ -595,6 +886,12 @@ bool VideoInit(bool classic)
 	xwin->on_event = on_xwin_event;
 	xwin->on_repaint = on_xwin_repaint;
 	xwin_hide_cursor(xwin, true);
+	// This backend hides the host cursor and lets the guest draw its own,
+	// so the guest cursor must track the real mouse position exactly:
+	// keep the ADB mouse in absolute mode and feed ADBMouseMoved() the
+	// Mac-screen coordinates of the host cursor (see on_xwin_event).
+	ADBSetRelMouseMode(false);
+	xwin_fullscreen(xwin);
 	xwin_set_visible(xwin, true);
 
 	printf("Using EwokOS xwin video output (%dx%d)\n", display_width, display_height);
@@ -618,6 +915,14 @@ void VideoExit(void)
 	}
 	free(the_buffer);
 	the_buffer = NULL;
+	free(the_shadow);
+	the_shadow = NULL;
+	free(xmap);
+	xmap = NULL;
+	xmap_len = 0;
+	free(ymap);
+	ymap = NULL;
+	ymap_len = 0;
 	pthread_mutex_unlock(&frame_lock);
 }
 
@@ -640,12 +945,7 @@ void VideoInterrupt(void)
 		printf("xwin: MacOS started, VBL running\n");
 	}
 
-	pthread_mutex_lock(&frame_lock);
-	if (MacFrameBaseHost != NULL) {	// frame buffer allocated yet?
-		convert_frame();
-		frame_pending = true;
-	}
-	pthread_mutex_unlock(&frame_lock);
+	scan_convert_rows();
 }
 
 // Refreshed (non-VOSF) mode update: same as VBL for us
@@ -656,4 +956,28 @@ void VideoRefresh(void)
 
 void VideoQuitFullScreen(void)
 {
+}
+
+
+/*
+ *  Copy-progress splash for AssetsPrepareUserDisks() (prefs_unix.cpp):
+ *  done/total bytes across all pending disk images, total <= 0 hides
+ *  the splash again.  Runs on the main thread before x_run() starts,
+ *  so xwin_repaint() pushes every update synchronously.
+ */
+
+void VideoDiskCopySplash(int done, int total)
+{
+	if (xwin == NULL)
+		return;
+	if (total <= 0) {
+		copy_splash = false;
+		copy_splash_done = 0;
+		copy_splash_total = 0;
+	} else {
+		copy_splash = true;
+		copy_splash_done = done;
+		copy_splash_total = total;
+	}
+	xwin_repaint(xwin);
 }

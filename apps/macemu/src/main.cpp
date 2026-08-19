@@ -42,6 +42,10 @@
 #define DEBUG 0
 #include "debug.h"
 
+// EwokOS: copy shipped disk images into the user directory with a
+// progress splash once the window is visible (prefs_unix.cpp)
+extern void AssetsPrepareUserDisks(void);
+
 #if ENABLE_MON
 #include "mon.h"
 
@@ -146,17 +150,6 @@ bool InitAll(const char *vmdir)
 	XPRAM[0x7a] = i16 >> 8;
 	XPRAM[0x7b] = i16 & 0xff;
 
-	// Init drivers
-	SonyInit();
-	DiskInit();
-	CDROMInit();
-	SCSIInit();
-
-#if SUPPORTS_EXTFS
-	// Init external file system
-	ExtFSInit();
-#endif
-
 	// Init serial ports
 	SerialInit();
 
@@ -175,7 +168,9 @@ bool InitAll(const char *vmdir)
 	// Init audio
 	AudioInit();
 
-	// Init video
+	// Init video before the drives are opened: EwokOS copies shipped
+	// disk images into the user directory with a progress splash once
+	// the window is visible (AssetsPrepareUserDisks below)
 	if (!VideoInit(ROMVersion == ROM_VERSION_64K || ROMVersion == ROM_VERSION_PLUS || ROMVersion == ROM_VERSION_CLASSIC))
 		return false;
 
@@ -185,6 +180,22 @@ bool InitAll(const char *vmdir)
 	const monitor_desc &main_monitor = *VideoMonitors[0];
 	XPRAM[0x58] = uint8(main_monitor.depth_to_apple_mode(main_monitor.get_current_mode().depth));
 	XPRAM[0x59] = 0;
+
+	// EwokOS: finish copying shipped disk images into the user directory
+	// now that the window is up; must run before DiskInit() opens the
+	// drives so the prefs point at the writable user copies
+	AssetsPrepareUserDisks();
+
+	// Init drivers
+	SonyInit();
+	DiskInit();
+	CDROMInit();
+	SCSIInit();
+
+#if SUPPORTS_EXTFS
+	// Init external file system
+	ExtFSInit();
+#endif
 
 #if EMULATED_68K
 	// Init 680x0 emulation (this also activates the memory system which is needed for PatchROM())

@@ -5,4 +5,4 @@ nocdrom true
 frameskip 2
 screen win/640/480/8
 modelid 5
-nosound true
+nosound false

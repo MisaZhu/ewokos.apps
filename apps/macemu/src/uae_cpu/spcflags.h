@@ -63,6 +63,26 @@ enum {
 
 #if !(ENABLE_EXCLUSIVE_SPCFLAGS)
 
+#if defined(__GNUC__) && (defined(__aarch64__) || defined(__arm__))
+
+/* EwokOS: input events call TriggerInterrupt() from a non-emulation
+ * thread (the xwin event loop), so SPCFLAGS_SET races against the 68k
+ * thread's SPCFLAGS_CLEAR on SMP.  A bare |= lets the concurrent CLEAR
+ * store overwrite a just-SET SPCFLAG_INT; the mouse UP edge then idles
+ * in the ADB queue until the next 60Hz tick (~16ms), and every mouse
+ * move in that window drags — a tap turns into a drag.  32-bit atomics
+ * compile to a single ldsetal/ldclral on ARM/AArch64, no libatomic
+ * needed. */
+#define SPCFLAGS_SET(m) do { \
+	__atomic_fetch_or(&regs.spcflags, (m), __ATOMIC_SEQ_CST); \
+} while (0)
+
+#define SPCFLAGS_CLEAR(m) do { \
+	__atomic_fetch_and(&regs.spcflags, ~(m), __ATOMIC_SEQ_CST); \
+} while (0)
+
+#else
+
 #define SPCFLAGS_SET(m) do { \
 	regs.spcflags |= (m); \
 } while (0)
@@ -70,6 +90,8 @@ enum {
 #define SPCFLAGS_CLEAR(m) do { \
 	regs.spcflags &= ~(m); \
 } while (0)
+
+#endif
 
 #elif defined(X86_ASSEMBLY)
 

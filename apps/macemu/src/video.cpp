@@ -613,6 +613,15 @@ int16 monitor_desc::driver_control(uint16 code, uint32 param, uint32 dce)
 			if (ReadMacInt16(param + csPage))
 				return paramErr;
 
+			// Never fill from address 0: if the frame buffer base was
+			// never published (no cscSetMode yet, see driver_open),
+			// the dither pattern would wipe the vector table,
+			// low-memory globals and the start of the system heap
+			// (mac_frame_base == 0 is the "base not published" marker,
+			// see cscSetMode above).
+			if (mac_frame_base == 0)
+				switch_to_current_mode();
+
 			uint32 pattern[6] = {
 				0xaaaaaaaa,		// 1 bpp
 				0xcccccccc,		// 2 bpp

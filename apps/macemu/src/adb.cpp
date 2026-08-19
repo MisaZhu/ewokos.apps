@@ -64,6 +64,27 @@ static uint8 key_reg_3[2] = {0x62, 0x05};	// Keyboard ADB register 3
 
 static uint8 m_keyboard_type = 0x05;
 
+// Pending button edges (mouse_lock protected).  One entry per state
+// transition, holding the full button bitmap of that moment.  Dispatching
+// ADB packets from a "current state vs last sent" compare can only see
+// the final state, so a quick UP+DOWN pair (touch tip bounce) merged into
+// one interrupt dispatch vanished entirely and left the guest stuck on a
+// phantom press.  An explicit edge queue keeps every transition, exactly
+// like minivmac's MyEvtQ.
+#define BTN_Q_SIZE 32
+static uint8 btn_q[BTN_Q_SIZE];
+static int btn_q_head = 0, btn_q_tail = 0;		// head = next to send, tail = next free
+static uint8 btn_queued_state = 0;				// button bitmap of the last queued edge
+
+static void queue_btn_edge(uint8 st)
+{
+	btn_q[btn_q_tail] = st;
+	btn_q_tail = (btn_q_tail + 1) % BTN_Q_SIZE;
+	if (btn_q_tail == btn_q_head)				// full: drop the oldest edge
+		btn_q_head = (btn_q_head + 1) % BTN_Q_SIZE;
+	btn_queued_state = st;
+}
+
 // ADB mouse motion lock (for platforms that use separate input thread)
 static B2_mutex *mouse_lock;
 
@@ -241,17 +262,42 @@ void ADBMouseMoved(int x, int y)
 	}
 	B2_unlock_mutex(mouse_lock);
 	SetInterruptFlag(INTFLAG_ADB);
+	// Inject right away: cursor latency stacks up along the host mouse ->
+	// ADB -> guest draw -> convert -> present chain, and deferring to the
+	// 60Hz tick would add up to a full frame for nothing.  Waking the 68k
+	// core is cheap (an atomic flag plus at most one sem_post), so even a
+	// 1000Hz gaming mouse costs a fraction of a percent of CPU here.
 	TriggerInterrupt();
 }
 
 
-/* 
+/*
  *  Mouse button pressed
  */
 
 void ADBMouseDown(int button)
 {
+	uint8 q_before = 0;
+	bool forced = false;
+	B2_lock_mutex(mouse_lock);
 	mouse_button[button] = true;
+	if (!relative_mouse) {
+		uint8 st = 0;
+		if (mouse_button[0]) st |= 1;
+		if (mouse_button[1]) st |= 2;
+		if (mouse_button[2]) st |= 4;
+		q_before = btn_queued_state;
+		// minivmac semantics: a DOWN always delivers a complete press
+		// edge.  If this button is already queued pressed (repeated DOWN,
+		// or a lost UP), force a release edge first so a stuck guest
+		// state recovers — MyMouseButtonSet(false) before (true).
+		forced = (btn_queued_state & (1 << button)) != 0;
+		if (forced)
+			queue_btn_edge(st & ~(1 << button));
+		queue_btn_edge(st);
+	}
+	B2_unlock_mutex(mouse_lock);
+	printf("dbg adb: DOWN b=%d q=%d forced=%d\n", button, q_before, forced);
 	SetInterruptFlag(INTFLAG_ADB);
 	TriggerInterrupt();
 }
@@ -263,7 +309,24 @@ void ADBMouseDown(int button)
 
 void ADBMouseUp(int button)
 {
+	uint8 q_before = 0;
+	bool queued = false;
+	B2_lock_mutex(mouse_lock);
 	mouse_button[button] = false;
+	if (!relative_mouse) {
+		uint8 st = 0;
+		if (mouse_button[0]) st |= 1;
+		if (mouse_button[1]) st |= 2;
+		if (mouse_button[2]) st |= 4;
+		q_before = btn_queued_state;
+		// Edge dedup like minivmac's MyMouseButtonSet: a repeated UP
+		// (button already queued released) queues nothing
+		queued = (btn_queued_state & (1 << button)) != 0;
+		if (queued)
+			queue_btn_edge(st);
+	}
+	B2_unlock_mutex(mouse_lock);
+	printf("dbg adb: UP b=%d q=%d queued=%d\n", button, q_before, queued);
 	SetInterruptFlag(INTFLAG_ADB);
 	TriggerInterrupt();
 }
@@ -330,8 +393,14 @@ void ADBInterrupt(void)
 
 	// Return if ADB is not initialized
 	uint32 adb_base = ReadMacInt32(0xcf8);
-	if (!adb_base || adb_base == 0xffffffff)
+	if (!adb_base || adb_base == 0xffffffff) {
+		// NOTE: the INTFLAG_ADB was already cleared by the dispatcher, so
+		// any queued button edge stays stuck here until the next input
+		// event re-arms the flag — a release edge stuck this way leaves
+		// the guest with a pressed mouse button.
+		printf("dbg adb: IRQ SKIP base=%08x\n", adb_base);
 		return;
+	}
 	uint32 tmp_data = adb_base + 0x163;	// Temporary storage for faked ADB data
 
 	// Get mouse state
@@ -405,22 +474,46 @@ void ADBInterrupt(void)
 			old_mouse_y = my;
 		}
 
-		// Send mouse button events
-		if (mb[0] != old_mouse_button[0] || mb[1] != old_mouse_button[1] || mb[2] != old_mouse_button[2]) {
-			uint32 mouse_base = adb_base + 16;
+		// Send ONE queued button edge per interrupt dispatch.  Upstream
+		// never sends more than one mouse ADB packet per ADBInterrupt and
+		// the guest's ADB service task is written for that cadence: a
+		// quick tap queues press+release back to back, and draining the
+		// whole burst into back-to-back Execute68k calls inside one
+		// dispatch window made the guest drop the release (finger up,
+		// Mac still dragging).  Leftover edges stay queued; re-arm the
+		// flag and self-trigger so the next 68k checkpoint dispatches the
+		// next edge microseconds later — a tap's press and release are
+		// two independent service calls, exactly like real hardware.
+		uint8 edge = 0;
+		bool have_edge = false;
+		bool more_edges = false;
+		B2_lock_mutex(mouse_lock);
+		if (btn_q_head != btn_q_tail) {
+			edge = btn_q[btn_q_head];
+			btn_q_head = (btn_q_head + 1) % BTN_Q_SIZE;
+			have_edge = true;
+			more_edges = (btn_q_head != btn_q_tail);
+		}
+		B2_unlock_mutex(mouse_lock);
+
+		if (have_edge) {
+			bool b0 = (edge & 1) != 0;
+			bool b1 = (edge & 2) != 0;
+			bool b2 = (edge & 4) != 0;
+			printf("dbg adb: IRQ edge=%d more=%d mx=%d my=%d\n", edge, more_edges, mx, my);
 
 			// Call mouse ADB handler
 			if (mouse_reg_3[1] == 4) {
 				// Extended mouse protocol
 				WriteMacInt8(tmp_data, 3);
-				WriteMacInt8(tmp_data + 1, mb[0] ? 0 : 0x80);
-				WriteMacInt8(tmp_data + 2, mb[1] ? 0 : 0x80);
-				WriteMacInt8(tmp_data + 3, mb[2] ? 0x08 : 0x88);
+				WriteMacInt8(tmp_data + 1, b0 ? 0 : 0x80);
+				WriteMacInt8(tmp_data + 2, b1 ? 0 : 0x80);
+				WriteMacInt8(tmp_data + 3, b2 ? 0x08 : 0x88);
 			} else {
 				// 100/200 dpi mode
 				WriteMacInt8(tmp_data, 2);
-				WriteMacInt8(tmp_data + 1, mb[0] ? 0 : 0x80);
-				WriteMacInt8(tmp_data + 2, mb[1] ? 0 : 0x80);
+				WriteMacInt8(tmp_data + 1, b0 ? 0 : 0x80);
+				WriteMacInt8(tmp_data + 2, b1 ? 0 : 0x80);
 			}
 			r.a[0] = tmp_data;
 			r.a[1] = ReadMacInt32(mouse_base);
@@ -429,9 +522,13 @@ void ADBInterrupt(void)
 			r.d[0] = (mouse_reg_3[0] << 4) | 0x0c;	// Talk 0
 			Execute68k(r.a[1], &r);
 
-			old_mouse_button[0] = mb[0];
-			old_mouse_button[1] = mb[1];
-			old_mouse_button[2] = mb[2];
+			if (more_edges) {
+				// Same-thread trigger is race-free (SPCFLAGS_SET from
+				// the 68k thread itself) and fires at the very next
+				// instruction-boundary checkpoint.
+				SetInterruptFlag(INTFLAG_ADB);
+				TriggerInterrupt();
+			}
 		}
 	}
 
