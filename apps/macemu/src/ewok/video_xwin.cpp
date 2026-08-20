@@ -131,6 +131,7 @@ static uint8 frame_pal[256 * 3];      // Current palette (RGB)
 static pthread_mutex_t frame_lock = PTHREAD_MUTEX_INITIALIZER;
 static volatile bool frame_pending = false;
 static volatile bool emerg_quit = false;
+static pthread_t x_thread_id = 0;            // thread running the x event loop (main thread)
 
 // Window letterboxing (set by on_repaint, used for mouse mapping)
 static float view_scale = 1.0f;
@@ -722,6 +723,34 @@ static void *emul_thread_func(void *arg)
 }
 
 /*
+ *  QuitEmulator() invoked off the x thread (guest Shut Down via
+ *  M68K_EMUL_OP_SHUTDOWN, fatal emulation errors): the x thread owns
+ *  every xwin object and may be blocked inside an xwin IPC right now
+ *  (e.g. xwin_repaint()'s UPDATE fcntl), so tearing the window down
+ *  here races it — xwin_close() freed xinfo under an in-flight repaint
+ *  and the main thread died with a data abort at NULL+0x1c.  Wake the
+ *  x loop and end this thread in place instead: the caller sits deep
+ *  inside the 68k interpreter, whose inner loop (m68k_do_execute)
+ *  never checks quit_program — with guest interrupts masked during
+ *  shutdown a cooperative stop never happens and the session just
+ *  black-screens.  pthread_exit() unwinds nothing, which is fine: no
+ *  quit call site holds a lock, and the x thread's pthread_join()
+ *  plus re-entered QuitEmulator() do the real teardown.
+ *  Returns true when the quit was deferred (never returns in
+ *  practice: the thread exits first).
+ */
+bool VideoDeferQuitToXThread(void)
+{
+	// No x loop running (early init failures quit in place), or already
+	// on the x thread: tear down directly
+	if (x_thread_id == 0 || pthread_equal(pthread_self(), x_thread_id))
+		return false;
+	x_terminate(x_context);	// wake the x loop now
+	pthread_exit(NULL);		// VideoRunLoop's pthread_join then succeeds
+	return true;			// not reached
+}
+
+/*
  *  Run the emulation, minivmac-style: the 68k core runs in its own
  *  pthread while the x event loop (x_run) runs on the calling (main)
  *  thread.  All xwin API calls therefore happen on the main thread.
@@ -732,6 +761,8 @@ void VideoRunLoop(void)
 {
 	if (x_context == NULL || xwin == NULL)
 		return;
+
+	x_thread_id = pthread_self();
 
 	if (pthread_create(&emul_thread_id, NULL, emul_thread_func, NULL) != 0)
 		return;

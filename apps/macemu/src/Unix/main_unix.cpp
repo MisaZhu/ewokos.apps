@@ -915,6 +915,16 @@ void QuitEmulator(void)
 {
 	D(bug("QuitEmulator\n"));
 
+#ifdef USE_EWOK_XWIN
+	// A quit triggered on the emulation thread (guest Shut Down,
+	// M68K_EMUL_OP_*, fatal emulation errors) must not tear the window
+	// down here: the x thread owns all xwin state and may be blocked
+	// inside an xwin IPC.  Defer the teardown to it (video_xwin.cpp).
+	extern bool VideoDeferQuitToXThread(void);
+	if (VideoDeferQuitToXThread())
+		return;
+#endif
+
 #if EMULATED_68K
 	// Exit 680x0 emulation
 	Exit680x0();
