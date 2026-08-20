@@ -1,8 +1,10 @@
-ramsize 16777216
-cpu 4
-fpu false
+cpu        68030
+fpu        false
+modelid    14
+ramsize    33554432
 nocdrom true
+
 frameskip 2
-screen win/640/480/8
+screen win/640/480/24
 modelid 5
 nosound false

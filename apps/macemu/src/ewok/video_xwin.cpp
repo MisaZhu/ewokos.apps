@@ -892,7 +892,9 @@ static void add_mode(vector<video_mode> &modes, int width, int height, int resol
 
 bool VideoInit(bool classic)
 {
-	// Get screen mode from preferences ("win/W/H[/D]")
+	// Only the color depth comes from preferences ("win/W/H[/D]"); the
+	// desktop size tracks the fullscreen window's workspace rect (read
+	// below, before the window turns visible).
 	const char *mode_str = PrefsFindString("screen");
 	if (classic) {
 		display_width = 512;
@@ -901,14 +903,45 @@ bool VideoInit(bool classic)
 	}
 	if (mode_str) {
 		int w, h, d;
-		if (sscanf(mode_str, "win/%d/%d/%d", &w, &h, &d) == 3) {
-			display_width = w; display_height = h; display_depth = d;
-		} else if (sscanf(mode_str, "win/%d/%d", &w, &h) == 2) {
-			display_width = w; display_height = h;
-		}
+		if (sscanf(mode_str, "win/%d/%d/%d", &w, &h, &d) == 3)
+			display_depth = d;
 	}
 	if (classic)
 		display_depth = 1;
+
+	// Open the xwin context and window
+	x_context = (x_t *)malloc(sizeof(x_t));
+	if (x_context == NULL)
+		return false;
+	memset(x_context, 0, sizeof(x_t));
+	x_init(x_context, NULL);
+	x_context->on_loop = xwin_loop;
+
+	xwin = xwin_open(x_context, -1, 32, 32, display_width, display_height, "Basilisk II", 0);
+	if (xwin == NULL) {
+		printf("ERROR: cannot open xwin window\n");
+		return false;
+	}
+	xwin->on_resize = on_xwin_resize;
+	xwin->on_event = on_xwin_event;
+	xwin->on_repaint = on_xwin_repaint;
+	xwin_hide_cursor(xwin, true);
+	// This backend hides the host cursor and lets the guest draw its own,
+	// so the guest cursor must track the real mouse position exactly:
+	// keep the ADB mouse in absolute mode and feed ADBMouseMoved() the
+	// Mac-screen coordinates of the host cursor (see on_xwin_event).
+	ADBSetRelMouseMode(false);
+	xwin_fullscreen(xwin);
+
+	// xwin_fullscreen() waited on the x server, which recomputed the
+	// workspace rect for the MAX state into the shared xinfo: that is
+	// the display size the guest desktop runs at.  Classic keeps its
+	// fixed 512x342.
+	if (!classic && xwin->xinfo != NULL &&
+			xwin->xinfo->wsr.w > 0 && xwin->xinfo->wsr.h > 0) {
+		display_width = xwin->xinfo->wsr.w;
+		display_height = xwin->xinfo->wsr.h;
+	}
 	if (display_width < 320) display_width = 320;
 	if (display_width & 7) display_width &= ~7;
 
@@ -945,29 +978,6 @@ bool VideoInit(bool classic)
 	for (int i = 0; i < 256; i++)
 		frame_pal[i * 3 + 0] = frame_pal[i * 3 + 1] = frame_pal[i * 3 + 2] = i;
 
-	// Open the xwin context and window
-	x_context = (x_t *)malloc(sizeof(x_t));
-	if (x_context == NULL)
-		return false;
-	memset(x_context, 0, sizeof(x_t));
-	x_init(x_context, NULL);
-	x_context->on_loop = xwin_loop;
-
-	xwin = xwin_open(x_context, -1, 32, 32, display_width, display_height, "Basilisk II", 0);
-	if (xwin == NULL) {
-		printf("ERROR: cannot open xwin window\n");
-		return false;
-	}
-	xwin->on_resize = on_xwin_resize;
-	xwin->on_event = on_xwin_event;
-	xwin->on_repaint = on_xwin_repaint;
-	xwin_hide_cursor(xwin, true);
-	// This backend hides the host cursor and lets the guest draw its own,
-	// so the guest cursor must track the real mouse position exactly:
-	// keep the ADB mouse in absolute mode and feed ADBMouseMoved() the
-	// Mac-screen coordinates of the host cursor (see on_xwin_event).
-	ADBSetRelMouseMode(false);
-	xwin_fullscreen(xwin);
 	xwin_set_visible(xwin, true);
 
 	printf("Using EwokOS xwin video output (%dx%d)\n", display_width, display_height);
