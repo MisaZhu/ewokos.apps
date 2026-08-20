@@ -949,6 +949,8 @@ bool VideoInit(bool classic)
 		int w, h, d;
 		if (sscanf(mode_str, "win/%d/%d/%d", &w, &h, &d) == 3)
 			display_depth = d;
+		display_width = w;
+		display_height = h;
 	}
 	if (classic)
 		display_depth = 1;
