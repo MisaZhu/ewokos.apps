@@ -32,6 +32,10 @@
 // From newcpu.cpp: set to stop the 68k interpreter loop
 extern bool quit_program;
 
+// From main_unix.cpp: 60Hz heartbeat (60Hz/1Hz interrupts plus the
+// XPRAM watchdog), driven from xwin_loop so no tick thread is needed
+extern void TickHeartbeat(void);
+
 // Extra key codes not in ewoksys/keydef.h (same values minivmac uses)
 #ifndef KEY_INSERT
 #define KEY_INSERT      0xF3
@@ -394,13 +398,14 @@ static void convert_rows(const uint8 *src_fb, uint32 y0, uint32 y1)
  *  not coherent: a guest write between the two was latched into the
  *  shadow but never converted, leaving a permanently stale row —
  *  the visible "redraw ghost" — until the row changed again.)
+ *  Returns true when at least one changed row was found (and latched).
  */
-static void scan_convert_rows(void)
+static bool scan_convert_rows(void)
 {
 	pthread_mutex_lock(&frame_lock);
 	if (MacFrameBaseHost == NULL || the_buffer == NULL || frame_graph == NULL) {
 		pthread_mutex_unlock(&frame_lock);
-		return;
+		return false;
 	}
 
 	const video_mode &mode = VideoMonitors[0]->get_current_mode();
@@ -420,7 +425,8 @@ static void scan_convert_rows(void)
 	}
 	force_full = false;
 
-	if (bottom >= top) {
+	bool changed = (bottom >= top);
+	if (changed) {
 		// Latch the changed rows into the shadow first, then convert
 		// from the shadow (see the comment above): frame_graph and
 		// the_shadow are one coherent snapshot, and a guest write
@@ -442,6 +448,7 @@ static void scan_convert_rows(void)
 		}
 	}
 	pthread_mutex_unlock(&frame_lock);
+	return changed;
 }
 
 /*
@@ -629,6 +636,10 @@ static void xwin_loop(void *p)
 		return;
 	}
 
+	// Drive the 60Hz guest heartbeat from this loop; this loop runs at
+	// VBL-or-faster cadence, so no dedicated tick thread is needed
+	TickHeartbeat();
+
 	uint64_t tik = kernel_tic_ms(0);
 
 	// Apply a pending mode-switch resize (deferred here so it runs on
@@ -645,11 +656,13 @@ static void xwin_loop(void *p)
 		flush_pending_move();
 
 	// Pick up freshly drawn guest rows (a moving cursor above all)
-	// without waiting for the next 60Hz VBL.  Gated: VideoInterrupt()
-	// already scans per VBL, and every scan is a frame_lock section
-	// plus a full-frame compare — running it at the 5ms input budget
-	// would pile lock traffic onto the 68k thread for nothing.
-	if (tik - last_scan_ms >= SCAN_INTERVAL_MS) {
+	// without waiting for the next 60Hz VBL.  Only while input is
+	// flowing: at idle the per-VBL scan from VideoInterrupt() already
+	// covers all guest drawing one frame later, and every scan is a
+	// frame_lock section plus a full-frame compare — running it at
+	// the idle 60Hz cadence was the dominant idle CPU cost here.
+	if (last_input_ms != 0 && tik - last_input_ms < 100 &&
+		tik - last_scan_ms >= SCAN_INTERVAL_MS) {
 		last_scan_ms = tik;
 		scan_convert_rows();
 	}
@@ -1038,7 +1051,16 @@ void VideoInterrupt(void)
 	// the guest's 60Hz cadence even when no further input arrives
 	ADBVBLTick();
 
-	scan_convert_rows();
+	// Adaptive frame scan: while the guest keeps drawing, scan on every
+	// VBL; after 12 change-free scans (~200ms) back off to a 5Hz scan —
+	// the full-frame compare is the dominant idle cost on this thread.
+	// Input-driven redraws are additionally covered by the x thread's
+	// input-paced scan, so typing/mouse tracking stay at full rate.
+	static uint32_t quiet_vbls = 0;
+	if ((quiet_vbls < 12 || (quiet_vbls % 12) == 0) && scan_convert_rows())
+		quiet_vbls = 0;
+	else
+		quiet_vbls++;
 }
 
 // Refreshed (non-VOSF) mode update: same as VBL for us

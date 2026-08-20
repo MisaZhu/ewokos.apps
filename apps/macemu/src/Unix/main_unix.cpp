@@ -146,6 +146,7 @@ static uint8 last_xpram[XPRAM_SIZE];				// Buffer for monitoring XPRAM changes
 static pthread_t emul_thread;						// Handle of MacOS emulation thread (main thread)
 #endif
 
+#ifndef USE_EWOK_XWIN
 static bool xpram_thread_active = false;			// Flag: XPRAM watchdog installed
 static volatile bool xpram_thread_cancel = false;	// Flag: Cancel XPRAM thread
 static pthread_t xpram_thread;						// XPRAM watchdog
@@ -154,6 +155,10 @@ static bool tick_thread_active = false;				// Flag: 60Hz thread installed
 static volatile bool tick_thread_cancel = false;	// Flag: Cancel 60Hz thread
 static pthread_t tick_thread;						// 60Hz thread
 static pthread_attr_t tick_thread_attr;				// 60Hz thread attributes
+#endif
+// EwokOS xwin: no tick/XPRAM threads -- the 60Hz heartbeat (and the
+// inline XPRAM watchdog) is driven from the x thread's xwin_loop via
+// TickHeartbeat(), keeping macemu at 3 threads like minivmac
 
 static pthread_mutex_t intflag_lock = 0; // EwokOS: no PTHREAD_MUTEX_INITIALIZER	// Mutex to protect InterruptFlags
 #define LOCK_INTFLAGS pthread_mutex_lock(&intflag_lock)
@@ -201,8 +206,10 @@ static const char *gui_connection_path = NULL;	// GUI connection identifier
 
 
 // Prototypes
+#if defined(USE_PTHREADS_SERVICES) && !defined(USE_EWOK_XWIN)
 static void *xpram_func(void *arg);
 static void *tick_func(void *arg);
+#endif
 static void one_tick(...);
 #if !EMULATED_68K
 static void sigirq_handler(int sig, int code, struct sigcontext *scp);
@@ -803,7 +810,12 @@ int main(int argc, char **argv)
 #endif
 
 #ifndef USE_CPU_EMUL_SERVICES
-#if defined(HAVE_PTHREADS)
+#ifdef USE_EWOK_XWIN
+
+	// No 60Hz tick thread on EwokOS: TickHeartbeat() is called from
+	// the x thread's xwin_loop (see video_xwin.cpp) instead
+
+#elif defined(HAVE_PTHREADS)
 
 	// POSIX threads available, start 60Hz thread
 	// NOTE: EwokOS pthreads do not support thread attributes
@@ -869,10 +881,14 @@ int main(int argc, char **argv)
 #endif
 
 #ifdef USE_PTHREADS_SERVICES
-	// Start XPRAM watchdog thread
+	// Snapshot XPRAM for the watchdog
 	memcpy(last_xpram, XPRAM, XPRAM_SIZE);
+#ifndef USE_EWOK_XWIN
+	// Start XPRAM watchdog thread (on EwokOS it runs inline from
+	// one_second(), no dedicated thread)
 	xpram_thread_active = (pthread_create(&xpram_thread, NULL, xpram_func, NULL) == 0);
 	D(bug("XPRAM thread started\n"));
+#endif
 #endif
 
 	// Start 68k and jump to ROM boot routine
@@ -910,6 +926,8 @@ void QuitEmulator(void)
 	D(bug("%ld ticks in %ld usec = %f ticks/sec [%ld tick checks]\n",
 		  (long)emulated_ticks_count, (long)(emulated_ticks_end - emulated_ticks_start),
 		  emulated_ticks_count * 1000000.0 / (emulated_ticks_end - emulated_ticks_start), (long)n_check_ticks));
+#elif defined(USE_EWOK_XWIN)
+	// Nothing to stop: no 60Hz tick thread on EwokOS
 #elif defined(USE_PTHREADS_SERVICES)
 	// Stop 60Hz thread
 	if (tick_thread_active) {
@@ -929,7 +947,7 @@ void QuitEmulator(void)
 	setitimer(ITIMER_REAL, &req, NULL);
 #endif
 
-#ifdef USE_PTHREADS_SERVICES
+#if defined(USE_PTHREADS_SERVICES) && !defined(USE_EWOK_XWIN)
 	// Stop XPRAM watchdog thread
 	if (xpram_thread_active) {
 		xpram_thread_cancel = true;
@@ -1147,7 +1165,7 @@ static void xpram_watchdog(void)
 	}
 }
 
-#ifdef USE_PTHREADS_SERVICES
+#if defined(USE_PTHREADS_SERVICES) && !defined(USE_EWOK_XWIN)
 static void *xpram_func(void *arg)
 {
 	while (!xpram_thread_cancel) {
@@ -1172,7 +1190,8 @@ static void one_second(void)
 	SetInterruptFlag(INTFLAG_1HZ);
 	TriggerInterrupt();
 
-#ifndef USE_PTHREADS_SERVICES
+// EwokOS xwin: no XPRAM thread, run the watchdog inline here
+#if !defined(USE_PTHREADS_SERVICES) || defined(USE_EWOK_XWIN)
 	static int second_counter = 0;
 	if (++second_counter > 60) {
 		second_counter = 0;
@@ -1206,7 +1225,7 @@ static void one_tick(...)
 	}
 }
 
-#ifdef USE_PTHREADS_SERVICES
+#if defined(USE_PTHREADS_SERVICES) && !defined(USE_EWOK_XWIN)
 static void *tick_func(void *arg)
 {
 	uint64 start = GetTicks_usec();
@@ -1225,6 +1244,28 @@ static void *tick_func(void *arg)
 	uint64 end = GetTicks_usec();
 	D(bug("%lld ticks in %lld usec = %f ticks/sec\n", ticks, end - start, ticks * 1000000.0 / (end - start)));
 	return NULL;
+}
+#endif
+
+#ifdef USE_EWOK_XWIN
+/*
+ *  60Hz heartbeat for the EwokOS xwin backend.  Called from the x
+ *  thread's xwin_loop (video_xwin.cpp) instead of a dedicated tick
+ *  thread; same accumulator pacing as tick_func, so the guest VBL
+ *  cadence is unchanged while macemu runs with one thread less.
+ */
+void TickHeartbeat(void)
+{
+	static uint64 next = 0;
+	uint64 now = GetTicks_usec();
+	if (next == 0)
+		next = now;
+	if ((int64)(now - next) < 0)
+		return;
+	one_tick();
+	next += 16625;
+	if ((int64)(now - next) >= 16625)	// Fell a whole tick behind: resync
+		next = now;
 }
 #endif
 

@@ -47,6 +47,15 @@ extern void AudioInterrupt(void);
 extern void audio_enter_stream(void);
 extern void audio_exit_stream(void);
 
+// EwokOS feeder activity gate (see audio.cpp); always-active elsewhere
+#ifdef USE_EWOK_XWIN
+extern void audio_note_activity(void);
+extern bool audio_playback_active(void);
+#else
+static inline void audio_note_activity(void) {}
+static inline bool audio_playback_active(void) { return true; }
+#endif
+
 extern bool audio_set_sample_rate(int index);
 extern bool audio_set_sample_size(int index);
 extern bool audio_set_channels(int index);

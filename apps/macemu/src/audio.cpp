@@ -35,6 +35,10 @@
 #define DEBUG 0
 #include "debug.h"
 
+#ifdef USE_EWOK_XWIN
+#include <ewoksys/kernel_tic.h>
+#endif
+
 
 // Supported sample rates, sizes and channels
 vector<uint32> audio_sample_rates;
@@ -50,6 +54,28 @@ uint32 audio_data = 0;				// Mac address of global data area
 static int open_count = 0;			// Open/close nesting count
 
 bool AudioAvailable = false;		// Flag: audio output available (from the software point of view)
+
+#ifdef USE_EWOK_XWIN
+/*
+ *  Feeder activity gate (EwokOS): every audio IRQ handshake runs the
+ *  guest mixer on the 68k side, so polling for data while silent
+ *  costs real guest CPU (~8% at the idle desktop).  Track playback
+ *  activity instead: any component call or any non-silent block
+ *  keeps the stream alive; 500ms after the last activity the feeder
+ *  parks and the guest Sound Manager goes quiet as well.
+ */
+static volatile uint64_t audio_last_active_ms = 0;
+
+void audio_note_activity(void)
+{
+	audio_last_active_ms = kernel_tic_ms(0);
+}
+
+bool audio_playback_active(void)
+{
+	return kernel_tic_ms(0) - audio_last_active_ms < 500;
+}
+#endif
 
 
 /*
@@ -275,6 +301,10 @@ int32 AudioDispatch(uint32 params, uint32 globals)
 	M68kRegisters r;
 	uint32 p = params + cp_params;
 	int16 selector = (int16)ReadMacInt16(params + cp_what);
+
+	// Any component traffic means the guest is (re)configuring or
+	// starting playback: keep the feeder gate open (no-op on non-EwokOS)
+	audio_note_activity();
 
 	switch (selector) {
 

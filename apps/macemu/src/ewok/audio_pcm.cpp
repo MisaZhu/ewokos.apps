@@ -218,6 +218,26 @@ static bool audio_mute = false;
 static void *feeder_func(void *arg);
 
 /*
+ *  Digital-silence check on a raw Mac block: 16-bit silence is 0x0000,
+ *  8-bit (unsigned) silence is 0x80.  The device only ever runs 16-bit
+ *  stereo, so the block is always a whole number of 32-bit words and a
+ *  ~4KB scan here is negligible next to the guest mixer work it saves.
+ */
+static bool block_is_silence(const uint8 *p, int n)
+{
+	uint32 fill = (AudioStatus.sample_size == 8) ? 0x80808080 : 0;
+	const uint32 *w = (const uint32 *)p;
+	for (int i = 0; i < n / 4; i++) {
+		if (w[i] != fill)
+			return false;
+	}
+	return true;
+}
+
+// ~0.5s of consecutive silence at the ~43Hz block rate: park the feeder
+#define QUIET_PARK_BLOCKS 22
+
+/*
  *  Initialization
  */
 
@@ -356,30 +376,60 @@ static void *feeder_func(void *arg)
 	(void)arg;
 
 	int block_bytes = audio_frames_per_block * 4;	// 16-bit stereo
+	int quiet_blocks = 0;	// consecutive blocks mixed as pure silence
 
 	while (feeder_running) {
 		if (!AudioStatus.num_sources) {
-			// Audio not active, let the device idle
+			// No stream at all: let the device idle
 			proc_usleep(20 * 1000);
 			continue;
+		}
+		if (quiet_blocks >= QUIET_PARK_BLOCKS) {
+			// The guest has mixed pure silence for ~0.5s: park the IRQ
+			// handshake entirely, minivmac-style — no playback means no
+			// per-block Sound Manager mixer work on the 68k side (that
+			// handshake was the dominant idle CPU cost).  Any sound
+			// component call (beep, SndPlay, ...) reopens the gate.
+			if (audio_playback_active())
+				quiet_blocks = 0;
+			else {
+				proc_usleep(20 * 1000);
+				continue;
+			}
 		}
 
 		// Trigger audio interrupt to get new buffer
 		D(bug("stream: triggering irq\n"));
+		uint64_t iter_us = 0;
+		kernel_tic(NULL, &iter_us);
 		irq_ack = false;
 		SetInterruptFlag(INTFLAG_AUDIO);
 		TriggerInterrupt();
 
 		// Wait for AudioInterrupt() to deliver the data (poll, with a
-		// timeout so shutdown can't wedge the thread)
+		// timeout so shutdown can't wedge the thread).  A servicing
+		// guest acks within ~1-2ms; the 20ms window (a full block
+		// period) gives a loaded guest grace while keeping the
+		// no-ack case cheap: 10 short sleeps, then the idle backoff
+		// below.  The device queue (~4 periods) absorbs the 2ms
+		// detection jitter.
 		uint64_t t0 = kernel_tic_ms(0);
 		while (feeder_running && !irq_ack) {
-			if (kernel_tic_ms(0) - t0 > 200)
+			if (kernel_tic_ms(0) - t0 > 20)
 				break;
-			proc_usleep(500);
+			proc_usleep(2000);
 		}
 		if (!feeder_running)
 			break;
+		if (!irq_ack) {
+			// Guest isn't servicing audio interrupts (idle desktop):
+			// there is nothing to play, so don't pace the device
+			// either — back off to the idle cadence and retry.  The
+			// next iteration re-triggers the IRQ, so a guest that
+			// starts playing is picked up within ~40ms.
+			proc_usleep(20 * 1000);
+			continue;
+		}
 		D(bug("stream: ack received\n"));
 
 		// Get size of audio data
@@ -396,6 +446,16 @@ static void *feeder_func(void *arg)
 
 			Mac2Host_memcpy(audio_mix_buf, ReadMacInt32(apple_stream_info + scd_buffer), work_size);
 
+			// The mixer hands back a full block even when it mixed pure
+			// silence, so decide by content, not size: only real samples
+			// count as activity and keep the feeder gate open.
+			if (block_is_silence(audio_mix_buf, work_size))
+				quiet_blocks++;
+			else {
+				quiet_blocks = 0;
+				audio_note_activity();
+			}
+
 			// Big-endian 16-bit Mac samples -> host order, apply volume
 			const uint8 *src = audio_mix_buf;
 			uint16 *dst = (uint16 *)audio_out_buf;
@@ -411,9 +471,23 @@ static void *feeder_func(void *arg)
 		} else {
 			// No data or muted: keep the device paced with silence
 silence:
+			quiet_blocks++;
 			memset(audio_out_buf, 0, block_bytes);
 			pcm_write(sound_pcm, audio_out_buf, block_bytes);
 		}
+
+		// Pace the loop on the audio clock: a blocking write() already
+		// consumed the block period, but a driver that accepts or
+		// rejects data instantly (dead/headless stream) would
+		// otherwise let this loop free-run and burn the CPU on IRQ
+		// handshakes alone.  Paced on the attempted block, so a
+		// failed write also backs off instead of hammering.
+		uint64_t done_us = 0;
+		kernel_tic(NULL, &done_us);
+		uint64_t block_us = (uint64_t)(out_bytes / 4) * 1000000 /
+			(AudioStatus.sample_rate >> 16);
+		if (block_us > done_us - iter_us)
+			proc_usleep((uint32_t)(block_us - (done_us - iter_us)));
 	}
 	return NULL;
 }
