@@ -151,29 +151,44 @@ typedef void (*copy_progress_fn)(off_t done, off_t file_size, void *arg);
 static bool copy_file_if_needed(const char *src_path, const char *dst_path,
 	copy_progress_fn progress, void *arg)
 {
-	char buffer[1024*32];
+	/*
+	 * 64KB matches the VFS shared-memory transfer size (SHM_MAX), so each
+	 * read/write is exactly one IPC round-trip instead of two.
+	 * Heap-allocated: 64KB is too large for the default thread stack.
+	 */
+	const size_t buf_size = 1024*64;
+	char *buffer = (char *)malloc(buf_size);
 	ssize_t nread;
 	struct stat st;
 	off_t copied = 0;
 	off_t file_size = 0;
 
-	if (access(dst_path, F_OK) == 0)
+	if (buffer == NULL)
+		return false;
+
+	if (access(dst_path, F_OK) == 0) {
+		free(buffer);
 		return true;
+	}
 
 	int src_fd = open(src_path, O_RDONLY);
-	if (src_fd < 0)
+	if (src_fd < 0) {
+		free(buffer);
 		return false;
+	}
 	if (fstat(src_fd, &st) == 0)
 		file_size = st.st_size;
 
 	int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 	if (dst_fd < 0) {
+		free(buffer);
 		close(src_fd);
 		return false;
 	}
 
-	while ((nread = read(src_fd, buffer, sizeof(buffer))) > 0) {
+	while ((nread = read(src_fd, buffer, buf_size)) > 0) {
 		if (write_all_fd(dst_fd, buffer, (size_t)nread) != (size_t)nread) {
+			free(buffer);
 			close(dst_fd);
 			close(src_fd);
 			unlink(dst_path);
@@ -183,6 +198,7 @@ static bool copy_file_if_needed(const char *src_path, const char *dst_path,
 		if (progress != NULL)
 			progress(copied, file_size, arg);
 	}
+	free(buffer);
 
 	if (nread < 0) {
 		close(dst_fd);
