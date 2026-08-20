@@ -61,6 +61,7 @@ prefs_desc common_prefs_items[] = {
 	{"nosound", TYPE_BOOLEAN, false,  "don't enable sound output"},
 	{"noclipconversion", TYPE_BOOLEAN, false, "don't convert clipboard contents"},
 	{"nogui", TYPE_BOOLEAN, false,    "disable GUI"},
+	{"hidpi", TYPE_BOOLEAN, false,    "high resolution display"},
 	{"jit", TYPE_BOOLEAN, false,         "enable JIT compiler"},
 	{"jitfpu", TYPE_BOOLEAN, false,      "enable JIT compilation of FPU instructions"},
 	{"jitdebug", TYPE_BOOLEAN, false,    "enable JIT debugger (requires mon builtin)"},
@@ -94,6 +95,7 @@ void AddPrefsDefaults(void)
 	PrefsAddBool("nosound", false);
 	PrefsAddBool("noclipconversion", false);
 	PrefsAddBool("nogui", false);
+	PrefsAddBool("hidpi", false);
 	
 #if USE_JIT
 	// JIT compiler specific options

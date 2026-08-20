@@ -8,3 +8,4 @@ frameskip 2
 screen win/640/480/24
 modelid 5
 nosound false
+hidpi true

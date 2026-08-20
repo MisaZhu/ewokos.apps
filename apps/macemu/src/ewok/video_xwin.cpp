@@ -18,6 +18,7 @@
 #include <ewoksys/keydef.h>
 #include <ewoksys/kernel_tic.h>
 #include <ewoksys/proc.h>
+#include <ewoksys/klog.h>
 
 #include "cpu_emulation.h"
 #include "video.h"
@@ -195,11 +196,16 @@ static int present_top = DIRTY_NONE_TOP;		// snapshot of dirty_top, x thread onl
 static int present_bottom = DIRTY_NONE_BOT;
 static bool incremental_repaint = false;		// x thread only: present just the dirty rows
 
-// Upscale cache (scale > 1): refilled by graph_scale_tof_fast() — the
-// system graph library's fast scaler, the same one minivmac uses — on
-// every present, and reallocated only when the window layout changes.
+// Upscale caches (scale > 1), refilled by graph_scale_tof_fast() —
+// the system graph library's fast scaler, the same one minivmac
+// uses.  `scaled` holds a full frame for non-incremental presents;
+// `scaled_band` holds just the dirty band for incremental presents
+// at integer scales (the hidpi 2x desktop), so the per-present
+// upscale cost tracks the dirty region instead of the whole frame.
+// Both are reallocated only when their target geometry changes.
 // x thread only.
 static graph_t *scaled = NULL;
+static graph_t *scaled_band = NULL;
 static float last_scale = 0.0f;
 static int last_gw = 0, last_gh = 0, last_ox = 0, last_oy = 0;
 
@@ -592,33 +598,80 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 			if (bottom > fh - 1) bottom = fh - 1;
 
 			if (scale != 1.0f) {
-				// minivmac-style scaling through the system graph
-				// library: graph_scale_tof_fast() into the cached graph,
-				// then blit.  The rescale is full-frame (the arch path is
-				// a separable row-cached pass); only the blit is limited
-				// to the destination rows the dirty band maps onto,
-				// expanded by one source row each way to cover the
-				// bilinear vertical taps.
-				if (scaled == NULL || scaled->w != scaled_w || scaled->h != scaled_h) {
-					graph_t *tmp = graph_new(NULL, scaled_w, scaled_h);
-					if (scaled != NULL)
-						graph_free(scaled);
-					scaled = tmp;
-				}
-				if (scaled != NULL) {
-					graph_scale_tof_fast(fg, scaled, scale);
-					int bt = (top > 0) ? top - 1 : 0;
-					int bb = (bottom < fh - 1) ? bottom + 1 : fh - 1;
-					int dy0 = offset_y + (int)(bt * scale);
-					int dy1 = offset_y + (int)((bb + 1) * scale + 0.99f) - 1;
-					if (dy0 < offset_y) dy0 = offset_y;
-					if (dy1 > offset_y + scaled_h - 1) dy1 = offset_y + scaled_h - 1;
-					graph_blt(scaled, 0, dy0 - offset_y, scaled_w, dy1 - dy0 + 1,
-						g, offset_x, dy0, scaled_w, dy1 - dy0 + 1);
+				int iscale = (int)scale;
+				if (incremental && iscale >= 2 && scale == (float)iscale) {
+					// Dirty-band rescale (incremental present at an
+					// integer scale — the hidpi 2x desktop): scale only
+					// the dirty source rows through a sub-image view of
+					// the frame, expanded by two rows each way to cover
+					// the bilinear vertical taps.  With an integer scale
+					// the band maps onto whole destination rows, so the
+					// band output is pixel-identical to a full-frame
+					// rescale and the dirty region drives the upscale
+					// cost as well as the blit.
+					int bt = (top > 1) ? top - 2 : 0;
+					int bb = (bottom < fh - 3) ? bottom + 2 : fh - 1;
+					// The view runs one row deeper than the blit coverage:
+					// the bottom-most blitted row still blends source rows
+					// bb and bb+1 (the bilinear taps read downward), and
+					// clamping it to bb would make that row differ from a
+					// full-frame rescale.  When bb already sits on the last
+					// frame row the full-frame pass clamps the same way.
+					int vb = (bb < fh - 1) ? bb + 1 : bb;
+					int band_h = vb - bt + 1;
+					int band_sh = band_h * iscale;
+					int blit_sh = (bb - bt + 1) * iscale;
+					if (scaled_band == NULL || scaled_band->w != scaled_w ||
+							scaled_band->h != band_sh) {
+						graph_t *tmp = graph_new(NULL, scaled_w, band_sh);
+						if (scaled_band != NULL)
+							graph_free(scaled_band);
+						scaled_band = tmp;
+					}
+					if (scaled_band != NULL) {
+						graph_t band;
+						memset(&band, 0, sizeof(band));
+						band.buffer = fg->buffer + (uint32)bt * fw;
+						band.w = fw;
+						band.h = band_h;
+						graph_scale_tof_fast(&band, scaled_band, scale);
+						graph_blt(scaled_band, 0, 0, scaled_w, blit_sh,
+							g, offset_x, offset_y + bt * iscale,
+							scaled_w, blit_sh);
+					} else {
+						// Cache allocation failed: let graph_blt() scale
+						// the band directly
+						graph_blt(fg, 0, bt, fw, bb - bt + 1,
+							g, offset_x, offset_y + bt * iscale,
+							scaled_w, blit_sh);
+					}
 				} else {
-					// Cache allocation failed: let graph_blt() scale directly
-					graph_blt(fg, 0, 0, fw, fh,
-						g, offset_x, offset_y, scaled_w, scaled_h);
+					// Full-frame rescale (fractional letterbox scales and
+					// non-incremental repaints): only the blit is limited
+					// to the destination rows the dirty band maps onto,
+					// expanded by one source row each way to cover the
+					// bilinear vertical taps.
+					if (scaled == NULL || scaled->w != scaled_w || scaled->h != scaled_h) {
+						graph_t *tmp = graph_new(NULL, scaled_w, scaled_h);
+						if (scaled != NULL)
+							graph_free(scaled);
+						scaled = tmp;
+					}
+					if (scaled != NULL) {
+						graph_scale_tof_fast(fg, scaled, scale);
+						int bt = (top > 0) ? top - 1 : 0;
+						int bb = (bottom < fh - 1) ? bottom + 1 : fh - 1;
+						int dy0 = offset_y + (int)(bt * scale);
+						int dy1 = offset_y + (int)((bb + 1) * scale + 0.99f) - 1;
+						if (dy0 < offset_y) dy0 = offset_y;
+						if (dy1 > offset_y + scaled_h - 1) dy1 = offset_y + scaled_h - 1;
+						graph_blt(scaled, 0, dy0 - offset_y, scaled_w, dy1 - dy0 + 1,
+							g, offset_x, dy0, scaled_w, dy1 - dy0 + 1);
+					} else {
+						// Cache allocation failed: let graph_blt() scale directly
+						graph_blt(fg, 0, 0, fw, fh,
+							g, offset_x, offset_y, scaled_w, scaled_h);
+					}
 				}
 			} else {
 				graph_blt(fg, 0, top, fw, bottom - top + 1,
@@ -939,6 +992,7 @@ bool VideoInit(bool classic)
 	// Only the color depth comes from preferences ("win/W/H[/D]"); the
 	// desktop size tracks the fullscreen window's workspace rect (read
 	// below, before the window turns visible).
+	bool hidpi = PrefsFindBool("hidpi");
 	const char *mode_str = PrefsFindString("screen");
 	if (classic) {
 		display_width = 512;
@@ -988,6 +1042,13 @@ bool VideoInit(bool classic)
 		display_width = xwin->xinfo->wsr.w;
 		display_height = xwin->xinfo->wsr.h;
 	}
+
+	klog("hidpi: %d, width %d\n", hidpi, display_width);
+	if(hidpi && display_width >= 1280) {
+		display_width = display_width / 2;
+		display_height = display_height / 2;
+	}
+
 	if (display_width < 320) display_width = 320;
 	if (display_width & 7) display_width &= ~7;
 
@@ -1056,6 +1117,10 @@ void VideoExit(void)
 	if (scaled != NULL) {
 		graph_free(scaled);
 		scaled = NULL;
+	}
+	if (scaled_band != NULL) {
+		graph_free(scaled_band);
+		scaled_band = NULL;
 	}
 	pthread_mutex_unlock(&frame_lock);
 }
