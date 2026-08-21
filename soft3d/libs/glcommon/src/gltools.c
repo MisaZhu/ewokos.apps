@@ -1,0 +1,574 @@
+#include <gltools.h>
+
+// Disable thread-local storage for embedded systems
+#define STBI_THREAD_LOCAL
+
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
+
+
+#ifndef ROW_MAJOR
+#define ROW_MAJOR GL_FALSE
+#else
+#define ROW_MAJOR GL_TRUE
+#endif
+
+
+void check_errors(int n, const char* str)
+{
+    GLenum error;
+    int err = 0;
+    while ((error = glGetError()) != GL_NO_ERROR) {
+        switch (error)
+        {
+        case GL_INVALID_ENUM:
+            fprintf(stderr, "invalid enum\n");
+            break;
+        case GL_INVALID_VALUE:
+            fprintf(stderr, "invalid value\n");
+            break;
+        case GL_INVALID_OPERATION:
+            fprintf(stderr, "invalid operation\n");
+            break;
+        case GL_INVALID_FRAMEBUFFER_OPERATION:
+            fprintf(stderr, "invalid framebuffer operation\n");
+            break;
+        case GL_OUT_OF_MEMORY:
+            fprintf(stderr, "out of memory\n");
+            break;
+        default:
+            fprintf(stderr, "wtf?\n");
+        }
+        err = 1;
+    }
+    if (err)
+        fprintf(stderr, "%d: %s\n\n", n, (!str)? "Errors cleared" : str);
+}
+
+
+
+int file_read(FILE* file, char** out)
+{
+    char* data;
+    long size;
+
+    //assert(out);
+
+    fseek(file, 0, SEEK_END);
+    size = ftell(file);
+    if (size <= 0) {
+        if (size == -1)
+            perror("ftell failure");
+        fclose(file);
+        return 0;
+    }
+
+    data = (char*)malloc(size+1);
+    if (!data) {
+        fclose(file);
+        return 0;
+    }
+
+    rewind(file);
+    if (!fread(data, size, 1, file)) {
+        perror("fread failure");
+        fclose(file);
+        free(data);
+        return 0;
+    }
+
+    data[size] = 0; /* null terminate in all cases even if reading binary data */
+
+    *out = data;
+
+    fclose(file);
+    return size;
+}
+
+int file_open_read(const char* filename, const char* mode, char** out)
+{
+    FILE *file = fopen(filename, mode);
+    if (!file)
+        return 0;
+
+    return file_read(file, out);
+}
+
+
+#define BUF_SIZE 4096
+
+int link_program(GLuint program)
+{
+    glLinkProgram(program);
+    int status = 0;
+    char info_buf[BUF_SIZE];
+    glGetProgramiv(program, GL_LINK_STATUS, &status);
+    if (GL_FALSE == status) {
+        int len = 0;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &len);
+
+        if (len > 0) {
+            int written = 0;
+            glGetProgramInfoLog(program, len, &written, info_buf);
+            printf("Link failed:\n===============\n%s\n", info_buf);
+        }
+        return 0;
+    }
+
+    return program;
+}
+
+int compile_shader_str(GLuint shader, const char* shader_str)
+{
+    glShaderSource(shader, 1, &shader_str, NULL);
+    glCompileShader(shader);
+
+    int result;
+    char shader_info_buf[BUF_SIZE];
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &result);
+    if (GL_FALSE == result) {
+        int length = 0;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length);
+        if (length > 0 && length <= BUF_SIZE) {
+            int written = 0;
+            glGetShaderInfoLog(shader, BUF_SIZE, &written, shader_info_buf);
+
+            printf("Compile failed:\n===============\n%s\n", shader_info_buf);
+        }
+        return 0;
+    }
+    return 1;
+}
+
+#undef BUF_SIZE
+
+GLuint load_shader_pair(const char* vert_shader_src, const char* frag_shader_src)
+{
+    GLuint program, vert_shader, frag_shader;
+
+    program = glCreateProgram();
+    vert_shader = glCreateShader(GL_VERTEX_SHADER);
+    frag_shader = glCreateShader(GL_FRAGMENT_SHADER);
+
+    if (!compile_shader_str(vert_shader, vert_shader_src))
+        return 0;
+    if (!compile_shader_str(frag_shader, frag_shader_src))
+        return 0;
+
+    glAttachShader(program, vert_shader);
+    glAttachShader(program, frag_shader);
+
+    glDeleteShader(vert_shader);
+    glDeleteShader(frag_shader);
+
+    return link_program(program);
+}
+
+GLuint load_shader_file_pair(const char* vert_file, const char* frag_file)
+{
+    char *vs_str, *fs_str;
+
+    if (!file_open_read(vert_file, "r", &vs_str))
+        return 0;
+    if (!file_open_read(frag_file, "r", &fs_str)) {
+        free(vs_str);
+        return 0;
+    }
+
+    return load_shader_pair(vs_str, fs_str);
+}
+
+void set_uniform1i(GLuint program, const char* name, int val)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0)
+        glUniform1i(loc, val);
+    else
+        printf("Uniform: %s not found.\n", name);
+}
+
+void set_uniform2i(GLuint program, const char* name, int x, int y)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0)
+        glUniform2i(loc, x, y);
+    else
+        printf("Uniform: %s not found.\n", name);
+}
+
+void set_uniform3i(GLuint program, const char* name, int x, int y, int z)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0)
+        glUniform3i(loc, x, y, z);
+    else
+        printf("Uniform: %s not found.\n", name);
+}
+
+void set_uniform4i(GLuint program, const char* name, int x, int y, int z, int w)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0)
+        glUniform4i(loc, x, y, z, w);
+    else
+        printf("Uniform: %s not found.\n", name);
+}
+
+void set_uniform1f(GLuint program, const char* name, float val)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0)
+        glUniform1f(loc, val);
+    else
+        printf("Uniform: %s not found.\n", name);
+}
+
+void set_uniform2f(GLuint program, const char* name, float x, float y)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0)
+        glUniform2f(loc, x, y);
+    else
+        printf("Uniform: %s not found.\n", name);
+}
+
+void set_uniform3f(GLuint program, const char* name, float x, float y, float z)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0)
+        glUniform3f(loc, x, y, z);
+    else
+        printf("Uniform: %s not found.\n", name);
+}
+
+void set_uniform4f(GLuint program, const char* name, float x, float y, float z, float w)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0)
+        glUniform4f(loc, x, y, z, w);
+    else
+        printf("Uniform: %s not found.\n", name);
+}
+
+void set_uniform2fv(GLuint program, const char* name, const GLfloat* v)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0)
+        glUniform2fv(loc, 1, v);
+    else
+        printf("Uniform: %s not found.\n", name);
+}
+
+void set_uniform3fv(GLuint program, const char* name, const GLfloat* v)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0)
+        glUniform3fv(loc, 1, v);
+    else
+        printf("Uniform: %s not found.\n", name);
+}
+
+void set_uniform4fv(GLuint program, const char* name, const GLfloat* v)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0)
+        glUniform4fv(loc, 1, v);
+    else
+        printf("Uniform: %s not found.\n", name);
+}
+
+
+void set_uniform_mat4f(GLuint program, const char* name, const GLfloat* mat)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0) {
+        //TODO transpose if necessary
+        glUniformMatrix4fv(loc, 1, ROW_MAJOR, mat);
+    } else {
+        printf("Uniform: %s not found.\n", name);
+    }
+}
+
+void set_uniform_mat3f(GLuint program, const char* name, const GLfloat* mat)
+{
+    int loc = glGetUniformLocation(program, name);
+    if (loc >= 0) {
+        //TODO transpose if necessary
+        glUniformMatrix3fv(loc, 1, ROW_MAJOR, mat);
+    } else {
+        printf("Uniform: %s not found.\n", name);
+    }
+}
+
+
+
+
+void flip_2D_tex(GLubyte* pix, int w, int h)
+{
+    // alloca? just some arbitrary size? 4096 seems like plenty for a max dimension
+    // and 16 kb isn't too much for the stack
+    //GLubyte* tmp_row = (u8*)malloc(t->w*4);
+    GLubyte* tmp_row[MAX_TEX_DIM*4];
+
+    assert(w <= MAX_TEX_DIM);
+
+    int s = w*4;
+
+    int h2 = h/2;
+    for (int i=0, j=h-1; i<h2; i++, j--) {
+        memcpy(tmp_row, &pix[i*s], s);
+        memcpy(&pix[i*s], &pix[j*s], s);
+        memcpy(&pix[j*s], tmp_row, s);
+    }
+}
+
+
+
+// image can be statically/stack allocated as it is not freed
+void load_texture2D_from_mem(GLubyte* image, int w, int h, GLenum min_filter, GLenum mag_filter, GLenum wrap_mode, GLboolean flip, GLboolean mapdata)
+{
+    assert(image);
+
+    if (flip) {
+        flip_2D_tex(image, w, h);
+    }
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_mode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_mode);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
+
+#ifndef USING_GLES2
+    //TODO add parameter?
+    GLfloat green[4] = { 0.0, 1.0, 0.0, 1.0f };
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, (GLfloat*)&green);
+#endif
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    if (!mapdata) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA, w, h, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, image);
+    } else {
+        // TODO map image for regular OpenGL
+#ifdef USING_PORTABLEGL
+        pglTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA, w, h, 0,
+                      GL_RGBA, GL_UNSIGNED_BYTE, image);
+#endif
+    }
+
+    if (min_filter == GL_LINEAR_MIPMAP_LINEAR ||
+        min_filter == GL_LINEAR_MIPMAP_NEAREST ||
+        min_filter == GL_NEAREST_MIPMAP_LINEAR ||
+        min_filter == GL_NEAREST_MIPMAP_NEAREST)
+    {
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+}
+
+// NOTE: Only call this with mapdata == true if you want the texture in memory for the rest of the program as we do not return it.
+// If you want to be able to free it, load the image yourself and pass the pixels to load_texture2D_from_mem()
+GLboolean load_texture2D(const char* filename, GLenum min_filter, GLenum mag_filter, GLenum wrap_mode, GLboolean flip, GLboolean mapdata, int* width, int* height)
+{
+    GLubyte* image = NULL;
+    int w, h, n;
+    if (!(image = stbi_load(filename, &w, &h, &n, STBI_rgb_alpha))) {
+        fprintf(stdout, "Error loading image %s: %s\n\n", filename, stbi_failure_reason());
+        return GL_FALSE;
+    }
+
+    if (width) *width = w;
+    if (height) *height = h;
+
+    load_texture2D_from_mem(image, w, h, min_filter, mag_filter, wrap_mode, flip, mapdata);
+
+    if (!mapdata) {
+        stbi_image_free(image);
+    }
+    return GL_TRUE;
+}
+
+GLboolean load_texture_cubemap_from_mem(GLubyte* image, int w, int h, GLenum min_filter, GLenum mag_filter, GLboolean flip, GLboolean mapdata)
+{
+    assert(image);
+    assert(w == h);
+
+    GLenum cube[6] =
+    {
+        GL_TEXTURE_CUBE_MAP_POSITIVE_X,
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+        GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+        GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_Z
+    };
+
+    int plane = w*h*4;
+    // should probably flip before packing the planes for this function
+    if (flip) {
+        for (int i=0; i<6; i++) {
+            flip_2D_tex(&image[i*plane], w, h);
+        }
+    }
+
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+#ifndef USING_GLES2
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+#endif
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, min_filter);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, mag_filter);
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    if (!mapdata) {
+        for (int i=0; i<6; i++) {
+            glTexImage2D(cube[i], 0, GL_COMPRESSED_RGBA, w, h, 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, &image[i*plane]);
+
+            if (min_filter == GL_LINEAR_MIPMAP_LINEAR ||
+                min_filter == GL_LINEAR_MIPMAP_NEAREST ||
+                min_filter == GL_NEAREST_MIPMAP_LINEAR ||
+                min_filter == GL_NEAREST_MIPMAP_NEAREST)
+            {
+                glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+            }
+        }
+    } else {
+        // TODO map image for regular OpenGL
+#ifdef USING_PORTABLEGL
+        pglTexImage2D(GL_TEXTURE_CUBE_MAP, 0, GL_COMPRESSED_RGBA, w, h, 0,
+                      GL_RGBA, GL_UNSIGNED_BYTE, image);
+#else
+        fprintf(stderr, "Mapping cubemap data only supported with PortableGL\n");
+        return GL_FALSE;
+#endif
+    }
+
+    return GL_TRUE;
+}
+
+GLboolean load_texture_cubemap(const char* filename[], GLenum min_filter, GLenum mag_filter, GLboolean flip, GLboolean mapdata)
+{
+    GLubyte* images[6] = {0};
+    int w, h, n;
+
+#ifndef USING_PORTABLEGL
+    //assert(!mapdata);
+    if (mapdata) {
+        fprintf(stderr, "Mapping cubemap data only supported with PortableGL\n");
+        return GL_FALSE;
+    }
+#endif
+
+    int prev_w, prev_h;
+    for (int i=0; i<6; ++i) {
+        if (!(images[i] = stbi_load(filename[i], &w, &h, &n, STBI_rgb_alpha))) {
+            fprintf(stdout, "Error loading image %s\n\n", filename[i]);
+            return GL_FALSE;
+        }
+        if (i) {
+            assert(w == prev_w && h == prev_h);
+        }
+        prev_w = w;
+        prev_h = h;
+
+        // handle flip in _mem() sub-function
+        /*if (flip) {*/
+        /*	flip_2D_tex(images[i], w, h);*/
+        /*}*/
+    }
+    int s = w*4; // stride
+    int p = h*s; // 1 plane size
+
+    GLubyte* pix = (GLubyte*)malloc(p*6);
+
+    // Copy separately allocated images to combined memory location
+    // and flipped location, free separate allocations
+    for (int i=0; i<6; i++) {
+        memcpy(&pix[i*p], images[i], p);
+        free(images[i]);
+    }
+
+    return load_texture_cubemap_from_mem(pix, w, h, min_filter, mag_filter, flip, mapdata);
+}
+
+#ifndef USING_GLES2
+int load_texture2D_array_gif(const char* filename, GLenum min_filter, GLenum mag_filter, GLenum wrap_mode)
+{
+    GLubyte* image = NULL;
+    int w, h, n, frames;
+
+    //Purposely chosing to ignore delays as I don't think it's worth adding another parameter to
+    //expose it to the user. The user can just pick a standard 20 fps most of the time anyway
+    //u16* delays;
+    if (!(image = stbi_xload(filename, &w, &h, &n, STBI_rgb_alpha, &frames, NULL))) {
+        fprintf(stdout, "Error loading image %s: %s\n\n", filename, stbi_failure_reason());
+        return GL_FALSE;
+    }
+
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, wrap_mode);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, wrap_mode);
+
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, min_filter);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, mag_filter);
+
+    //TODO add parameter?
+    GLfloat green[4] = { 0.0, 1.0, 0.0, 0.5f };
+    glTexParameterfv(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BORDER_COLOR, (GLfloat*)&green);
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    // stbi_xload returns the frames tightly packed
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_COMPRESSED_RGBA, w, h, frames, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, image);
+
+    if (min_filter == GL_LINEAR_MIPMAP_LINEAR ||
+        min_filter == GL_LINEAR_MIPMAP_NEAREST ||
+        min_filter == GL_NEAREST_MIPMAP_LINEAR ||
+        min_filter == GL_NEAREST_MIPMAP_NEAREST)
+    {
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    }
+
+    free(image);
+
+    return frames;
+}
+
+// probably should combine load_texture2D and load_texture_rect, too similar
+GLboolean load_texture_rect(const char* filename, GLenum min_filter, GLenum mag_filter, GLenum wrap_mode, GLboolean flip)
+{
+    GLubyte* image = NULL;
+    int w, h, n;
+    if (!(image = stbi_load(filename, &w, &h, &n, STBI_rgb_alpha))) {
+        fprintf(stdout, "Error loading image %s: %s\n\n", filename, stbi_failure_reason());
+        return GL_FALSE;
+    }
+
+    if (flip) {
+        flip_2D_tex(image, w, h);
+    }
+
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_S, wrap_mode);
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_T, wrap_mode);
+
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MIN_FILTER, min_filter);
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MAG_FILTER, mag_filter);
+
+    //TODO add parameter?
+    GLfloat green[4] = { 0.0, 1.0, 0.0, 1.0f };
+    glTexParameterfv(GL_TEXTURE_RECTANGLE, GL_TEXTURE_BORDER_COLOR, (GLfloat*)&green);
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    glTexImage2D(GL_TEXTURE_RECTANGLE, 0, GL_RGBA, w, h, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, image);
+
+    free(image);
+
+    return GL_TRUE;
+}
+#endif
