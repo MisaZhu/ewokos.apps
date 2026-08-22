@@ -1,12 +1,13 @@
 
+DIRS = portablegl glcommon imgui
+#	demos
+
 all: 
-	cd portablegl; make
-	cd glcommon; make
-	cd imgui; make
-#	cd demos; make
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir || exit 1; \
+	done
 
 clean: 
-	cd portablegl; make clean
-	cd glcommon; make clean
-	cd imgui; make clean
-#	cd demos; make clean
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir clean; \
+	done

@@ -1,6 +1,12 @@
 
+DIRS = VideoPlayer
+
 all:
-	cd VideoPlayer;make
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir || exit 1; \
+	done
 
 clean:
-	cd VideoPlayer; make clean
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir clean; \
+	done

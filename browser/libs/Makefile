@@ -1,10 +1,14 @@
+DIRS = litehtml widget++
+
 all: basic_libs
 	@echo "all done."
 
 basic_libs:
-	cd litehtml;make
-	cd Widget++;make
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir || exit 1; \
+	done
 
 clean:
-	cd litehtml;make clean
-	cd Widget++;make clean
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir clean; \
+	done

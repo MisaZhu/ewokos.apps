@@ -1,8 +1,12 @@
 
+DIRS = ferox cglm
+
 all: 
-	cd ferox; make
-	cd cglm; make
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir || exit 1; \
+	done
 
 clean:	
-	cd ferox; make clean
-	cd cglm; make clean
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir clean; \
+	done

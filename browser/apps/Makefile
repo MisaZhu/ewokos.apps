@@ -1,5 +1,11 @@
+DIRS = xBrowser
+
 all: 
-	cd xBrowser; make
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir || exit 1; \
+	done
 
 clean:	
-	cd xBrowser; make clean
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir clean; \
+	done

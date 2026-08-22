@@ -1,7 +1,11 @@
+DIRS = libs apps
+
 all: 
-	cd libs; make
-	cd apps; make
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir || exit 1; \
+	done
 
 clean:	
-	cd libs; make clean
-	cd apps; make clean
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir clean; \
+	done

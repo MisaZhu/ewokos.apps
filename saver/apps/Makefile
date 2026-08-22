@@ -1,6 +1,12 @@
 
+DIRS = saver
+
 all: 
-	cd saver; make
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir || exit 1; \
+	done
 
 clean:	
-	cd saver; make clean
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir clean; \
+	done

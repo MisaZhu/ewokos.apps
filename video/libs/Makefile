@@ -1,10 +1,14 @@
+DIRS = ffmpeg widget++
+
 all: basic_libs
 	@echo "all done."
 
 basic_libs:
-	cd ffmpeg;make
-	cd widget++;make
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir || exit 1; \
+	done
 
 clean:
-	cd ffmpeg;make clean
-	cd widget++;make clean
+	@for dir in $(DIRS); do \
+		$(MAKE) -C $$dir clean; \
+	done
