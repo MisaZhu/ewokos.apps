@@ -1,6 +1,6 @@
 
-DIRS = macemu minivmac nesemu soft3d
-#	video browser saver
+DIRS = macemu nesemu soft3d
+#	video browser saver minivmac
 
 all: 
 	@for dir in $(DIRS); do \
