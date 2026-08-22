@@ -1,11 +1,10 @@
 cpu        68030
 fpu        false
-modelid    14
-ramsize    33554432
+ramsize    16777216
 nocdrom true
 
 frameskip 2
 screen win/640/480/24
-modelid 5
+modelid   14
 nosound false
 hidpi true
