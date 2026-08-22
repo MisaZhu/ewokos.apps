@@ -19,6 +19,13 @@
 #include <ewoksys/kernel_tic.h>
 #include <ewoksys/proc.h>
 
+extern "C" {
+#include <graph/rgb15.h>
+#include <graph/rgb24.h>
+void rgb15be_2_argb(uint32_t *out, const uint8_t *in, int bpr, int w, int h);
+void rgb24be_2_argb(uint32_t *out, const uint8_t *in, int bpr, int w, int h);
+}
+
 #include "cpu_emulation.h"
 #include "video.h"
 #include "adb.h"
@@ -351,30 +358,46 @@ static void convert_rows(const uint8 *src_fb, uint32 y0, uint32 y1)
 		break;
 	}
 	case VDEPTH_16BIT:
-		// Mac 16-bit = big-endian RGB555
-		for (uint32 y = y0; y <= y_end; y++) {
-			const uint8 *src = src_fb + y * bpr;
-			for (uint32 x = 0; x < w; x++) {
-				uint32 v = (src[x * 2] << 8) | src[x * 2 + 1];
-				uint32 r = (v >> 10) & 0x1f;
-				uint32 g = (v >> 5) & 0x1f;
-				uint32 b = v & 0x1f;
-				r = (r << 3) | (r >> 2);
-				g = (g << 3) | (g >> 2);
-				b = (b << 3) | (b >> 2);
-				dst[x] = 0xff000000 | (r << 16) | (g << 8) | b;
-			}
-			dst += w;
+		if (MacFrameLayout == FLAYOUT_HOST_555 && bpr == w * 2) {
+			// FLAYOUT_HOST_555 (see switch_to_current_mode): guest stores
+			// already landed as host-order XRGB1555 words, so expand with
+			// plain uint16 loads — no per-byte big-endian reassembly.
+			// (graph's argb_2_rgb15() is the opposite direction, ARGB->555,
+			// and rotates 180 degrees for panel scan; unusable here.)
+			// Use the graph library's rgb15->argb converter (NEON-backed
+			// under ARCH_BOOST) on just the dirty row band.
+			rgb15_2_argb(dst,
+				(uint16_t *)(src_fb + y0 * bpr),
+				w, y_end - y0 + 1);
+		} else {
+			// FLAYOUT_DIRECT (24-bit addressing): big-endian RGB555.
+			// rgb15be_2_argb reads raw big-endian bytes and expands
+			// each 5-bit channel to 8 bits with NEON acceleration
+			// (vrev32 inside the NEON pipeline, no separate bswap).
+			rgb15be_2_argb(dst, src_fb + y0 * bpr,
+				bpr, w, y_end - y0 + 1);
 		}
 		break;
 	case VDEPTH_32BIT:
-		// Mac 32-bit = big-endian xRGB: bytes [00][RR][GG][BB]
-		for (uint32 y = y0; y <= y_end; y++) {
-			const uint8 *src = src_fb + y * bpr;
-			for (uint32 x = 0; x < w; x++) {
-				dst[x] = 0xff000000 | (src[x * 4 + 1] << 16) | (src[x * 4 + 2] << 8) | src[x * 4 + 3];
-			}
-			dst += w;
+		if (MacFrameLayout == FLAYOUT_HOST_888 && bpr == w * 4) {
+			// FLAYOUT_HOST_888 (see switch_to_current_mode): the guest's
+			// per-pixel long stores already landed in host xRGB8888 order
+			// via frame_host_888_lput, so the dirty band is a plain row
+			// copy — hand it to the graph library's rgb24->argb converter
+			// (NEON-backed under ARCH_BOOST) on just the dirty row band.
+			// It sets alpha to 0xFF, which is stricter than a raw graph_blt
+			// (which leaves the guest's zero alpha byte untouched — still
+			// harmless for xserverd's opaque composite, but now the alpha
+			// is canonical).
+			rgb24_2_argb(dst, (uint32_t *)(src_fb + y0 * bpr),
+				w, y_end - y0 + 1);
+		} else {
+			// FLAYOUT_DIRECT (24-bit addressing): bytes [00][RR][GG][BB]
+			// in memory.  rgb24be_2_argb reads raw big-endian bytes and
+			// produces ARGB with NEON acceleration (vrev32 inside the
+			// NEON pipeline, no separate bswap).
+			rgb24be_2_argb(dst, src_fb + y0 * bpr,
+				bpr, w, y_end - y0 + 1);
 		}
 		break;
 	}
@@ -804,10 +827,23 @@ void XWIN_monitor_desc::switch_to_current_mode(void)
 	stale_frame_graph = frame_graph;
 	frame_graph = graph_new(NULL, width, height);
 
-	// UAE memory banking variables
+	// UAE memory banking variables.  In 32-bit depth use the host-order
+	// frame bank: frame_host_888_lput stores the guest's per-pixel longs
+	// in host xRGB8888 order, so convert_rows() degrades to a plain
+	// graph_blt row copy instead of a per-byte endian gather.  16-bit
+	// depth likewise uses frame_host_555 (word stores land host-order)
+	// so convert_rows() expands with uint16 loads.  Not available with
+	// 24-bit addressing (memory_init always maps the big-endian frame24
+	// bank there); other depths stay big-endian direct.
+	// InitFrameBufferMapping() below remaps the banks.
 	MacFrameBaseHost = the_buffer;
 	MacFrameSize = the_buffer_size;
-	MacFrameLayout = FLAYOUT_DIRECT;
+	if (mode.depth == VDEPTH_32BIT && !TwentyFourBitAddressing)
+		MacFrameLayout = FLAYOUT_HOST_888;
+	else if (mode.depth == VDEPTH_16BIT && !TwentyFourBitAddressing)
+		MacFrameLayout = FLAYOUT_HOST_555;
+	else
+		MacFrameLayout = FLAYOUT_DIRECT;
 	MacScreenWidth = width;
 	MacScreenHeight = height;
 
