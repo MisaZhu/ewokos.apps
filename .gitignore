@@ -98,3 +98,4 @@ libs/ffmpeg/lib/libswscale/libswscale.pc
 libs/ffmpeg/lib/libswscale/libswscale.version
 libs/ffmpeg/lib/doc/config.texi
 libs/ffmpeg/lib/doc/config.texi
+macemu/host/gencpu
