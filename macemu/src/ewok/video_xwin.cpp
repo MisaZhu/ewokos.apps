@@ -324,7 +324,7 @@ static void convert_rows(const uint8 *src_fb, uint32 y0, uint32 y1)
 	if (y0 >= h)
 		return;
 	uint32 y_end = (y1 < h - 1) ? y1 : h - 1;
-	uint32 *dst = frame_graph->buffer + y0 * w;
+	uint32_t *dst = frame_graph->buffer + y0 * w;
 
 	switch (mode.depth) {
 	case VDEPTH_1BIT:
