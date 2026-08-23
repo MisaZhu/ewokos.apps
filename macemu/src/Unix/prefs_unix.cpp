@@ -64,17 +64,19 @@ static string prefs_path;
  *  Auto-detect assets shipped next to the executable (EwokOS):
  *  if the configured "rom" does not exist, use the first regular file in
  *  <app dir>/res/roms.  Disk volumes come from two places: .dsk images
- *  are mounted ONLY from <home>/docs/macemu/disks (writable, guest
+ *  are mounted ONLY from <home>/.macemu/disks (writable, guest
  *  writes persist; the .dsk files shipped in res/disks are copied
- *  there on first run, and the user can add their own); .iso images
- *  are not copied, they are loaded from <app dir>/res/disks, real
- *  ISO 9660 ones read-only as "cdrom" drives, misnamed raw disk
- *  images (no CD001 PVD) read-only as disks.  Boot order: every image
- *  with valid boot blocks and a blessed System Folder is a candidate;
- *  with a single candidate it boots automatically, with two or more
- *  AssetsBootChoose() asks the user which one to start from once the
- *  window is up.  The chosen volume is moved to the front of the
- *  "disk" list.
+ *  there on first run, and the user can add their own).  .iso images
+ *  are never copied: shipped ones are loaded from <app dir>/res/disks
+ *  (real ISO 9660 read-only as "cdrom" drives, misnamed raw disk
+ *  images without a CD001 PVD read-only as disks); the user can also
+ *  keep .iso files in <home>/.macemu/disks, which are mounted the
+ *  same way and override a shipped image of the same name.  Boot
+ *  order: every image with valid boot blocks and a blessed System
+ *  Folder is a candidate; with a single candidate it boots
+ *  automatically, with two or more AssetsBootChoose() asks the user
+ *  which one to start from once the window is up.  The chosen volume
+ *  is moved to the front of the "disk" list.
  *  Missing .dsk copies are not created here (LoadPrefs runs before
  *  the window exists); they are recorded and copied by
  *  AssetsPrepareUserDisks() once the window is visible, with a copy
@@ -412,7 +414,7 @@ static bool get_user_disks_dir(char *path, size_t size)
 	if (session_get_by_uid(getuid(), &sinfo) != 0 || sinfo.home[0] == 0)
 		return false;
 
-	snprintf(path, size, "%s/docs/macemu/disks", sinfo.home);
+	snprintf(path, size, "%s/.macemu/disks", sinfo.home);
 	return true;
 }
 
@@ -461,7 +463,7 @@ static void autodetect_assets(void)
 	}
 
 	// Disk volumes:
-	// - .dsk images are mounted ONLY from <home>/docs/macemu/disks so
+	// - .dsk images are mounted ONLY from <home>/.macemu/disks so
 	//   guest writes persist.  The .dsk files shipped in res/disks are
 	//   copied there; missing copies are deferred to
 	//   AssetsPrepareUserDisks() which runs once the window is
@@ -471,11 +473,13 @@ static void autodetect_assets(void)
 	//   up by the user-dir scan below.
 	// - .iso images are never copied: real ISO 9660 ones are mounted
 	//   read-only from res/disks as CD-ROM drives, misnamed raw disk
-	//   images (no CD001 PVD) as read-only disks.  After the scan the
-	//   boot volume is chosen among all bootable images (see the boot
-	//   volume selection below) and moved to the front of the "disk"
-	//   list so it becomes drive 1 and the first bootable volume in
-	//   the drive queue.
+	//   images (no CD001 PVD) as read-only disks; .iso files kept in
+	//   the user dir are mounted the same way and override shipped
+	//   images of the same name.  After the scan the boot volume is
+	//   chosen among all bootable images (see the boot volume
+	//   selection below) and moved to the front of the "disk" list so
+	//   it becomes drive 1 and the first bootable volume in the drive
+	//   queue.
 	char disks_dir[256];
 	char user_disks_dir[256];
 	snprintf(disks_dir, sizeof(disks_dir), "%s/disks", res_dir);
@@ -499,29 +503,32 @@ static void autodetect_assets(void)
 			if (!is_regular_file(src_path))
 				continue;
 
+			// A same-name .iso in the user dir overrides the shipped
+			// image: it is mounted by the user-dir scan below, and the
+			// shipped file is never copied either way
+			if (iso_suffix && user_disks_dir[0] != '\0') {
+				char override_path[512];
+				snprintf(override_path, sizeof(override_path), "%s/%s",
+					user_disks_dir, de->d_name);
+				if (is_regular_file(override_path)) {
+					printf("autodetect: %s overridden by %s\n",
+						src_path, override_path);
+					continue;
+				}
+			}
+
 			// Real ISO 9660 images stay in the app's res/disks and are
 			// mounted read-only as CD-ROM drives (never copied to the
 			// user dir); misnamed raw disk images fall through to the
 			// disk handling below
 			if (iso_suffix && is_iso9660_image(src_path)) {
-				// Migrate stale "disk" entries (shipped path or an old
-				// user-dir copy)
-				char old_user_path[512];
-				if (user_disks_dir[0] != '\0')
-					snprintf(old_user_path, sizeof(old_user_path),
-						"%s/%s", user_disks_dir, de->d_name);
-				else
-					old_user_path[0] = '\0';
-				if (old_user_path[0] != '\0' &&
-				    is_regular_file(old_user_path))
-					unlink(old_user_path);
+				// Drop stale "disk" entries for this image (it is a
+				// CD-ROM, not a disk)
 				for (int i = 0; ; i++) {
 					const char *p = PrefsFindString("disk", i);
 					if (p == NULL)
 						break;
-					if (strcmp(p, src_path) == 0 ||
-					    (old_user_path[0] != '\0' &&
-					     strcmp(p, old_user_path) == 0)) {
+					if (strcmp(p, src_path) == 0) {
 						PrefsRemoveItem("disk", i);
 						i--;
 					}
@@ -550,24 +557,6 @@ static void autodetect_assets(void)
 				printf("autodetect: %s is not ISO 9660, using it as a "
 					"read-only disk image\n", de->d_name);
 				snprintf(ro_path, sizeof(ro_path), "*%s", src_path);
-				// Drop a stale user-dir copy (old versions copied
-				// .iso files) and migrate its prefs entry
-				if (user_disks_dir[0] != '\0') {
-					char stale_path[512];
-					snprintf(stale_path, sizeof(stale_path), "%s/%s",
-						user_disks_dir, de->d_name);
-					if (is_regular_file(stale_path))
-						unlink(stale_path);
-					for (int i = 0; ; i++) {
-						const char *p = PrefsFindString("disk", i);
-						if (p == NULL)
-							break;
-						if (strcmp(p, stale_path) == 0) {
-							PrefsReplaceString("disk", ro_path, i);
-							break;
-						}
-					}
-				}
 			}
 
 			// .dsk images mount ONLY from the user dir; .iso raw
@@ -619,22 +608,71 @@ static void autodetect_assets(void)
 		closedir(d);
 	}
 
-	// The user dir is user-managed: pick up .dsk files the user added
-	// there on their own (no shipped counterpart); never delete user
-	// files
+	// The user dir is user-managed: pick up the .dsk and .iso files
+	// the user keeps there; never delete user files.  A .dsk mounts
+	// writable; a .iso mounts like a shipped one (real ISO 9660 as a
+	// CD-ROM drive, a raw image as a read-only disk and boot
+	// candidate)
 	if (user_disks_dir[0] != '\0') {
 		DIR *ud = opendir(user_disks_dir);
 		if (ud != NULL) {
 			struct dirent *de;
 			while ((de = readdir(ud)) != NULL) {
+				bool dsk_suffix = has_suffix_ci(de->d_name, ".dsk");
+				bool iso_suffix = has_suffix_ci(de->d_name, ".iso");
 				if (de->d_name[0] == '.' ||
-				    !has_suffix_ci(de->d_name, ".dsk"))
+				    (!dsk_suffix && !iso_suffix))
 					continue;
 				char user_path[512];
 				snprintf(user_path, sizeof(user_path), "%s/%s",
 					user_disks_dir, de->d_name);
 				if (!is_regular_file(user_path))
 					continue;
+
+				if (iso_suffix) {
+					if (is_iso9660_image(user_path)) {
+						bool listed = false;
+						for (int i = 0; ; i++) {
+							const char *p = PrefsFindString("cdrom", i);
+							if (p == NULL)
+								break;
+							if (strcmp(p, user_path) == 0) {
+								listed = true;
+								break;
+							}
+						}
+						if (!listed)
+							PrefsAddString("cdrom", user_path);
+						printf("autodetect: CD-ROM image %s\n", user_path);
+						continue;
+					}
+					// Raw image: read-only disk ("*" prefix), like the
+					// shipped ones
+					printf("autodetect: %s is not ISO 9660, using it as "
+						"a read-only disk image\n", user_path);
+					char ro_path[514];
+					snprintf(ro_path, sizeof(ro_path), "*%s", user_path);
+					bool listed = false;
+					for (int i = 0; ; i++) {
+						const char *p = PrefsFindString("disk", i);
+						if (p == NULL)
+							break;
+						if (strcmp(p, ro_path) == 0) {
+							listed = true;
+							break;
+						}
+						if (strcmp(p, user_path) == 0) {
+							// Old writable entry: make it read-only
+							PrefsReplaceString("disk", ro_path, i);
+							listed = true;
+							break;
+						}
+					}
+					if (!listed)
+						PrefsAddString("disk", ro_path);
+					continue;
+				}
+
 				bool listed = false;
 				for (int i = 0; ; i++) {
 					const char *p = PrefsFindString("disk", i);
