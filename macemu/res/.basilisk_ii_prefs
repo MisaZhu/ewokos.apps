@@ -1,4 +1,4 @@
-cpu        68030
+cpu        68040
 fpu        false
 ramsize    16777216
 nocdrom true
