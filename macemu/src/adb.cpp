@@ -30,9 +30,15 @@
 #include "cpu_emulation.h"
 #include "emul_op.h"
 #include "main.h"
+#include "macos_util.h"
 #include "prefs.h"
 #include "video.h"
 #include "adb.h"
+#include "timer.h"
+
+#ifdef USE_EWOK_XWIN
+#include <ewoksys/kernel_tic.h>
+#endif
 
 #ifdef POWERPC_ROM
 #include "thunks.h"
@@ -58,6 +64,28 @@ static uint8 key_buffer[KEY_BUFFER_SIZE];
 static unsigned int key_read_ptr = 0, key_write_ptr = 0;
 
 static uint8 mouse_reg_3[2] = {0x63, 0x01};	// Mouse ADB register 3
+
+// Button-down busy-wait throttle (EwokOS): while the button is held, the
+// guest spins in classic StillDown() poll loops (Finder desktop marquee,
+// any modal drag wait) with no idle hook, which pegs the 68k thread on a
+// full core.  The loop only does real work when fresh input arrives (one
+// position injection per guest frame); between injections it is pure
+// spin — during a drag as much as during a stationary long-press.
+//
+// The interpreter loop (newcpu.cpp) therefore naps except inside a
+// full-speed window, and the window is kept open by WORK, not only by
+// input: every injection opens it, and every dirty-row scan hit (the
+// guest actually redrawing) re-opens it (video_xwin.cpp calls
+// adb_guest_drew()).  Redraw bursts of any length thus always run flat
+// out, while a genuinely idle poll loop naps: light naps while input is
+// recent, deep naps once things went quiet.
+#define ADB_REDRAW_WINDOW_MS	10	// full-speed window after input/drawing
+static volatile uint64_t adb_last_input_ms = 0;
+
+static inline void adb_input_note(void)
+{
+	adb_last_input_ms = kernel_tic_ms(0);
+}
 
 // Button edges wait one full guest VBL after a cursor position write
 // before being sent.  Touch delivers a brand-new position and the button
@@ -278,6 +306,7 @@ void ADBOp(uint8 op, uint8 *data)
 
 void ADBMouseMoved(int x, int y)
 {
+	adb_input_note();
 	B2_lock_mutex(mouse_lock);
 	if (relative_mouse) {
 		mouse_x += x; mouse_y += y;
@@ -294,6 +323,89 @@ void ADBMouseMoved(int x, int y)
 	TriggerInterrupt();
 }
 
+#ifdef USE_EWOK_XWIN
+/*
+ *  Called from the interpreter loop every ~1024 instructions.  Returns a
+ *  nap time while the guest busy-polls with the button down and neither
+ *  fresh input nor fresh guest drawing happened recently; 0 otherwise.
+ *  adb_guest_drew() re-arms the window from the dirty-row scan, so a
+ *  redraw burst — menu tracking, window drag, marquee, any length —
+ *  runs flat out to completion, and only the pure spin between input
+ *  and drawing is throttled.  The naps are nominal: the kernel
+ *  quantizes sleeps to its timer tick; a release, move or redraw wakes
+ *  the loop within one tick.
+ */
+
+void adb_guest_drew(void)
+{
+	// Only meaningful while the throttle is armed; avoids pointless
+	// timestamp writes on the scan path during normal operation
+	if (mouse_button[0])
+		adb_last_input_ms = kernel_tic_ms(0);
+}
+
+uint32 adb_poll_throttle_nap_usec(void)
+{
+	// Hot path: release the button and every normal phase exits here
+	if (!mouse_button[0])
+		return 0;
+	uint64_t quiet = kernel_tic_ms(0) - adb_last_input_ms;
+	if (quiet < ADB_REDRAW_WINDOW_MS)	// input or drawing in flight
+		return 0;
+	return (quiet < 250) ? 1000 : 4000;	// light nap, deep once idle
+}
+
+/*
+ *  Push the current absolute position into the guest's cursor low
+ *  memory and re-arm the button-edge settle gate.  68k thread only
+ *  (ADBInterrupt and ADBMouseVBLFlush); idempotent when the position
+ *  is already current.
+ */
+static void adb_push_position(void)
+{
+	if (mouse_x == old_mouse_x && mouse_y == old_mouse_y)
+		return;
+	WriteMacInt16(0x82a, mouse_x);
+	WriteMacInt16(0x828, mouse_y);
+	WriteMacInt16(0x82e, mouse_x);
+	WriteMacInt16(0x82c, mouse_y);
+	WriteMacInt8(0x8ce, ReadMacInt8(0x8cf));	// CrsrCouple -> CrsrNew
+	old_mouse_x = mouse_x;
+	old_mouse_y = mouse_y;
+	// Give the guest cursor machinery one full VBL to absorb the new
+	// position before a queued button edge may land — a press must
+	// never beat the move it belongs to.  Don't extend an already
+	// running wait: during a drag the press edge would starve until
+	// the motion stops.
+	if ((int32)(adb_vbl_count - btn_edge_earliest_vbl) >= 0)
+		btn_edge_earliest_vbl = adb_vbl_count + 1;
+}
+
+/*
+ *  VBL-synchronous position injection: VideoInterrupt() (video_xwin.cpp)
+ *  calls this just before the guest's VBL tasks run, so the cursor task
+ *  absorbs the freshest host position in the very VBL it arrived in.
+ *  The classic path (ADBMouseMoved -> ADBInterrupt) writes the position
+ *  AFTER that VBL's tasks already ran, costing a whole extra frame of
+ *  cursor latency.  Same injection rate as before (at most one push per
+ *  VBL), zero added interrupts.
+ */
+void ADBMouseVBLFlush(int x, int y)
+{
+	if (relative_mouse || !HasMacStarted())
+		return;
+	B2_lock_mutex(mouse_lock);
+	mouse_x = x;
+	mouse_y = y;
+	bool changed = (mouse_x != old_mouse_x || mouse_y != old_mouse_y);
+	if (changed)
+		adb_push_position();
+	B2_unlock_mutex(mouse_lock);
+	if (changed)
+		adb_input_note();	// fresh input: keep the throttle window open
+}
+#endif
+
 
 /*
  *  Mouse button pressed
@@ -301,6 +413,7 @@ void ADBMouseMoved(int x, int y)
 
 void ADBMouseDown(int button)
 {
+	adb_input_note();
 	B2_lock_mutex(mouse_lock);
 	mouse_button[button] = true;
 	if (!relative_mouse) {
@@ -328,6 +441,7 @@ void ADBMouseDown(int button)
 
 void ADBMouseUp(int button)
 {
+	adb_input_note();
 	B2_lock_mutex(mouse_lock);
 	mouse_button[button] = false;
 	if (!relative_mouse) {
@@ -515,22 +629,17 @@ void ADBInterrupt(void)
 			r.d[0] = mx;
 			r.d[1] = my;
 			Execute68k(proc_template, &r);
-#else
-			WriteMacInt16(0x82a, mx);
-			WriteMacInt16(0x828, my);
-			WriteMacInt16(0x82e, mx);
-			WriteMacInt16(0x82c, my);
-			WriteMacInt8(0x8ce, ReadMacInt8(0x8cf));	// CrsrCouple -> CrsrNew
-#endif
 			old_mouse_x = mx;
 			old_mouse_y = my;
-			// Give the guest cursor machinery one full VBL to absorb the
-			// new position before a queued button edge may land — a press
-			// must never beat the move it belongs to.  Don't extend an
-			// already running wait: during a drag the press edge would
-			// starve until the motion stops.
 			if ((int32)(adb_vbl_count - btn_edge_earliest_vbl) >= 0)
 				btn_edge_earliest_vbl = adb_vbl_count + 1;
+#else
+			// Low-memory write plus the button-edge settle gate;
+			// shared with the VBL-synchronous flush (ADBMouseVBLFlush),
+			// which usually already pushed this position ahead of the
+			// guest's VBL tasks and makes this a no-op.
+			adb_push_position();
+#endif
 		}
 
 		// Send ONE queued button edge per interrupt dispatch.  Upstream

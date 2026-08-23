@@ -7,4 +7,5 @@ frameskip 2
 screen win/640/480/16
 modelid   14
 nosound false
-hidpi true
+hidpi false
+fullscreen  true

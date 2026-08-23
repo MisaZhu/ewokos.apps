@@ -62,6 +62,7 @@ prefs_desc common_prefs_items[] = {
 	{"noclipconversion", TYPE_BOOLEAN, false, "don't convert clipboard contents"},
 	{"nogui", TYPE_BOOLEAN, false,    "disable GUI"},
 	{"hidpi", TYPE_BOOLEAN, false,    "high resolution display"},
+	{"fullscreen", TYPE_BOOLEAN, false,    "fullscreen mode"},
 	{"jit", TYPE_BOOLEAN, false,         "enable JIT compiler"},
 	{"jitfpu", TYPE_BOOLEAN, false,      "enable JIT compilation of FPU instructions"},
 	{"jitdebug", TYPE_BOOLEAN, false,    "enable JIT debugger (requires mon builtin)"},

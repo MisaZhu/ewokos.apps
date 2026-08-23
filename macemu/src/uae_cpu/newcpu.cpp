@@ -39,6 +39,13 @@ extern int intlev(void);	// From baisilisk_glue.cpp
 #include "compiler/compemu.h"
 #include "fpu/fpu.h"
 
+#ifdef USE_EWOK_XWIN
+// adb.cpp: throttle the guest's button-down busy-poll loops (EwokOS only)
+#include "timer.h"
+extern uint32 adb_poll_throttle_nap_usec(void);
+static int throttle_count = 1024;
+#endif
+
 #if defined(ENABLE_EXCLUSIVE_SPCFLAGS) && !defined(HAVE_HARDWARE_LOCKS)
 B2_mutex *spcflags_lock = NULL;
 #endif
@@ -1375,6 +1382,22 @@ void m68k_do_execute (void)
 #endif
 		(*cpufunctbl[opcode])(opcode);
 		cpu_check_ticks();
+#ifdef USE_EWOK_XWIN
+		// Button-down busy-poll throttle (adb.cpp).  Never nap while a
+		// guest interrupt or other specialty is pending: the emul thread
+		// services them all, and a nap would delay the redraw an input
+		// injection just triggered.  Otherwise the call returns 0 (one
+		// volatile read + branch) unless the button is held and input
+		// went quiet.
+		if (--throttle_count <= 0) {
+			throttle_count = 1024;
+			if (!SPCFLAGS_TEST(SPCFLAG_ALL)) {
+				uint32 nap = adb_poll_throttle_nap_usec();
+				if (nap != 0)
+					Delay_usec(nap);
+			}
+		}
+#endif
 		if (SPCFLAGS_TEST(SPCFLAG_ALL_BUT_EXEC_RETURN)) {
 			if (m68k_do_specialties())
 				return;

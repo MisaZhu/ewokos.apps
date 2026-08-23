@@ -39,4 +39,10 @@ extern void ADBVBLTick(void);
 
 extern void ADBSetRelMouseMode(bool relative);
 
+#ifdef USE_EWOK_XWIN
+// Push the freshest absolute position at VBL time, ahead of the guest's
+// VBL tasks (video_xwin.cpp VideoInterrupt)
+extern void ADBMouseVBLFlush(int x, int y);
+#endif
+
 #endif

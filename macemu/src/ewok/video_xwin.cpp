@@ -39,6 +39,11 @@ void rgb24be_2_argb(uint32_t *out, const uint8_t *in, int bpr, int w, int h);
 // From newcpu.cpp: set to stop the 68k interpreter loop
 extern bool quit_program;
 
+// adb.cpp: keep the button-down throttle window open while the guest is
+// actively redrawing (dirty-row scan hits), so redraw bursts never get
+// napped mid-flight
+extern void adb_guest_drew(void);
+
 // Extra key codes not in ewoksys/keydef.h (same values minivmac uses)
 #ifndef KEY_INSERT
 #define KEY_INSERT      0xF3
@@ -122,6 +127,21 @@ static int display_depth = 8;
 static uint8 *the_buffer = NULL;
 static uint32 the_buffer_size = 0;
 
+// The 68k thread writes the frame buffer through the UAE memory bank
+// WITHOUT holding frame_lock: the bank's lput/wput just does
+// *(type *)(FrameBaseDiff + mac_addr) = val, where FrameBaseDiff was
+// computed from MacFrameBaseHost (= the_buffer) at mode-switch time.
+// If switch_to_current_mode() freed the old the_buffer under the lock
+// while the 68k thread was mid-access (preempted between reading
+// FrameBaseDiff and storing through it), the store would land in
+// freed (possibly unmapped) memory — a data abort at a wild address.
+// Defer the free by one mode-switch cycle, exactly like the existing
+// stale_frame_graph pattern: the old buffer stays valid until the
+// next mode switch (or VideoExit), by which time the 68k thread has
+// picked up the new FrameBaseDiff and moved on.
+static uint8 *stale_buffer = NULL;
+static uint8 *stale_shadow = NULL;
+
 // Converted ARGB8888 frame, blitted to the window on repaint.
 // frame_graph is never freed at mode-switch time: the x thread's
 // repaint blits from it WITHOUT holding frame_lock (a stale buffer
@@ -144,6 +164,15 @@ static x_t *x_context = NULL;
 static xwin_t *xwin = NULL;
 static pthread_t emul_thread_id = 0;
 
+// Dedicated present thread: xwin_repaint() ends in a synchronous UPDATE
+// fcntl IPC to xserverd.  Running that round-trip on the x event thread
+// stalls x_run() for its whole duration, so a continuous input stream
+// (touch drag) queues up behind it and cursor latency grows without
+// bound.  A separate thread absorbs the IPC stall and keeps the event
+// thread free to feed ADB.
+static pthread_t present_thread_id = 0;
+static volatile bool present_thread_active = false;
+
 // Mode-switch resize request (emulation thread -> x thread).  All xwin
 // API calls must happen on the x thread: the xwin functions do IPC to
 // the x server, and issuing them from the emulation thread while the
@@ -153,22 +182,44 @@ static int resize_w = 0, resize_h = 0;
 static bool presented_once = false;
 static bool vbl_once = false;
 static uint64_t last_input_ms = 0;	// x thread only: last input event time
-static uint64_t last_present_ms = 0;	// x thread only: last guest-frame present
-#define PRESENT_INTERVAL_MS 16	// ~guest VBL cadence
+static uint64_t last_present_ms = 0;	// present thread only: last guest-frame present
+#define PRESENT_INTERVAL_MS 5	// Floor only: guest frames arrive at VBL rate anyway
 static uint64_t last_scan_ms = 0;		// x thread only: last dirty-row scan
-#define SCAN_INTERVAL_MS 8	// VideoInterrupt also scans per VBL
+#define SCAN_INTERVAL_MS 4	// Faster dirty-row pickup during input (cursor tracking)
 
 // Touch panels stream MOVE events at panel rate, far faster than the
 // guest consumes the absolute position (its cursor machinery runs at the
 // 60Hz VBL), and each injection costs an ADB dispatch plus a guest
 // cursor redraw.  Coalesce minivmac-style (its queue merges consecutive
 // position events): keep only the latest position and inject it at most
-// once per guest frame.  All fields here are x thread only.
+// once per guest frame.  pending_*/move_pending are set by the x thread
+// and consumed by its paced flush or by the 68k thread's VBL-synchronous
+// push (VideoInterrupt); injected_*/last_move_flush_ms are a dedup hint
+// only, so a benign race on them costs at most one extra flush.
 static bool move_pending = false;
 static int pending_mac_x = 0, pending_mac_y = 0;
 static int injected_mac_x = -1, injected_mac_y = -1;
 static uint64_t last_move_flush_ms = 0;
-#define MOVE_FLUSH_INTERVAL_MS 16	// ~guest VBL cadence
+#define MOVE_FLUSH_INTERVAL_MS 16	// Fallback cadence, see below
+/*
+ * Position flush paths.  The guest cursor machinery (CrsrNew -> cursor
+ * task) absorbs exactly ONE position per VBL, so the freshness that
+ * matters is how current the position is WHEN THE VBL RUNS, not how
+ * often it is injected:
+ *
+ *  1. Primary: VideoInterrupt() pushes the latest coalesced position
+ *     via ADBMouseVBLFlush() just before the guest's VBL tasks run, so
+ *     the cursor task absorbs it in that very VBL (see there).  One
+ *     push per VBL, zero added interrupts, no flooding.
+ *  2. Fallback (this paced flush): pre-boot there is no guest cursor
+ *     machinery to absorb a VBL push, and button edges always flush
+ *     immediately so their position snapshot is exact.
+ *
+ * The old 5ms cadence flooded the emulation thread with 200Hz ADB
+ * interrupts: InterruptFlags was permanently pending, idle_wait()'s
+ * "InterruptFlags != 0" check never let it nap, and a stationary
+ * long-press or drag pinned a whole core spinning the guest idle loop.
+ */
 
 static void flush_pending_move(void)
 {
@@ -194,9 +245,10 @@ static uint8 *the_shadow = NULL;
 static volatile int dirty_top = DIRTY_NONE_TOP;	// rows pending present (frame_lock)
 static volatile int dirty_bottom = DIRTY_NONE_BOT;
 static volatile bool force_full = true;			// palette/mode change: reconvert all rows
-static int present_top = DIRTY_NONE_TOP;		// snapshot of dirty_top, x thread only
+static int present_top = DIRTY_NONE_TOP;		// snapshot of dirty_top, present thread only
 static int present_bottom = DIRTY_NONE_BOT;
-static bool incremental_repaint = false;		// x thread only: present just the dirty rows
+static bool incremental_repaint = false;		// present thread only: present just the dirty rows
+static volatile bool force_full_repaint = false;	// window shm rebuilt: next paint must cover the whole window
 
 // Upscale cache (scale != 1), refilled by graph_scale_tof_fast() —
 // the system graph library's fast scaler, the same one minivmac
@@ -480,6 +532,10 @@ static void xwin_service(void);
 static void on_xwin_resize(xwin_t *win)
 {
 	(void)win;
+	// The window's shm buffer may have been rebuilt (fresh, empty): the
+	// next repaint must cover the whole window, not just the dirty band.
+	// Letterbox geometry itself is recomputed inside on_xwin_repaint().
+	force_full_repaint = true;
 }
 
 static void on_xwin_event(xwin_t *win, xevent_t *ev)
@@ -564,19 +620,31 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 		return;
 	}
 
-	// Repaints coming from the VBL path only push the dirty rows;
-	// everything else (window exposed, moved, resized, ...) must redraw
-	// the whole frame.
-	bool incremental = incremental_repaint;
-	incremental_repaint = false;
+	// Incremental (dirty-band) painting is only ever valid on the present
+	// thread.  Expose / resize / maximize repaints arrive on the x event
+	// thread and MUST redraw the whole frame, and the incremental flag the
+	// present thread raises just before xwin_repaint() must not leak into
+	// an expose that wins the painting_lock first (it would redraw only the
+	// dirty band and leave the rest of the window stale/incomplete).  Gate
+	// on actually being the present thread.  force_full_repaint covers a
+	// rebuilt (empty) window shm buffer.
+	bool from_present_thread = (present_thread_id != 0) &&
+		pthread_equal(pthread_self(), present_thread_id) != 0;
+	bool incremental = from_present_thread && incremental_repaint && !force_full_repaint;
+	if (from_present_thread)
+		incremental_repaint = false;
+	force_full_repaint = false;
 
 	// NO frame_lock here: the scale+blit below is the longest frame-path
 	// critical section, and this thread can be preempted mid-blit
 	// (per-core pinned scheduling); holding frame_lock would stall the
 	// 68k thread's per-VBL scan_convert_rows() behind it and freeze the
-	// guest's VBL pipeline.  Everything touched here is either x-thread
-	// local (view_*, present_*, scaled) or safe by construction:
-	// frame_graph is swapped atomically at mode switch and its old
+	// guest's VBL pipeline.  Everything touched here is either
+	// present-thread local (present_*, scaled) or safe by construction:
+	// view_scale/view_offset are also read by the x thread's mouse
+	// mapping but only change on a window resize, so a concurrent read
+	// is benign.  frame_graph is swapped atomically at mode switch and
+	// its old
 	// buffer is freed one cycle later (see switch_to_current_mode), so
 	// a concurrently swapped pointer can only cost one torn frame.
 	graph_t *fg = frame_graph;
@@ -686,41 +754,13 @@ static void xwin_service(void)
 	if (last_input_ms != 0 && tik - last_input_ms < 100 &&
 		tik - last_scan_ms >= SCAN_INTERVAL_MS) {
 		last_scan_ms = tik;
-		scan_convert_rows();
+		if (scan_convert_rows())
+			adb_guest_drew();	// guest redrawing: extend the throttle window
 	}
 
-	// Present at most one frame per guest VBL.  xwin_repaint() ends in a
-	// synchronous UPDATE_REFRESH IPC to xserverd; while input flows this
-	// loop runs on a 5ms budget and could otherwise pile up inside that
-	// IPC faster than the server composites, stalling event polling
-	// behind it.  The guest only draws a new frame per VBL anyway, so
-	// faster presents are pure IPC load.
-	bool do_repaint = false;
-	if (tik - last_present_ms >= PRESENT_INTERVAL_MS) {
-		pthread_mutex_lock(&frame_lock);
-		if (frame_pending) {
-			frame_pending = false;
-			present_top = dirty_top;
-			present_bottom = dirty_bottom;
-			dirty_top = DIRTY_NONE_TOP;
-			dirty_bottom = DIRTY_NONE_BOT;
-			do_repaint = true;
-		}
-		pthread_mutex_unlock(&frame_lock);
-	}
-
-	// A stale flag must never downgrade an externally triggered repaint
-	// (window exposed/moved/resized) to a dirty-rows-only one
-	incremental_repaint = false;
-	if (do_repaint && xwin != NULL) {
-		if (!presented_once) {
-			presented_once = true;
-			printf("xwin: presenting guest frames\n");
-		}
-		incremental_repaint = true;
-		xwin_repaint(xwin);
-		last_present_ms = kernel_tic_ms(0);
-	}
+	// Presenting runs on present_thread_func: the synchronous UPDATE IPC
+	// in xwin_repaint() must not stall this (x event) thread, or a
+	// continuous input stream queues up behind it and the cursor lags.
 }
 
 static void xwin_loop(void *p)
@@ -748,6 +788,42 @@ static void xwin_loop(void *p)
 		(last_input_ms != 0 && now - last_input_ms < 100) ? 5 : 1000 / 60;
 	if (gap < budget)
 		proc_usleep((budget - gap) * 1000);
+}
+
+static void *present_thread_func(void *arg)
+{
+	(void)arg;
+	while (present_thread_active) {
+		uint64_t tik = kernel_tic_ms(0);
+
+		bool do_repaint = false;
+		if (tik - last_present_ms >= PRESENT_INTERVAL_MS) {
+			pthread_mutex_lock(&frame_lock);
+			if (frame_pending) {
+				frame_pending = false;
+				present_top = dirty_top;
+				present_bottom = dirty_bottom;
+				dirty_top = DIRTY_NONE_TOP;
+				dirty_bottom = DIRTY_NONE_BOT;
+				do_repaint = true;
+			}
+			pthread_mutex_unlock(&frame_lock);
+		}
+
+		incremental_repaint = false;
+		if (do_repaint && xwin != NULL) {
+			if (!presented_once) {
+				presented_once = true;
+				printf("xwin: presenting guest frames\n");
+			}
+			incremental_repaint = true;
+			xwin_repaint(xwin);
+			last_present_ms = kernel_tic_ms(0);
+		}
+
+		proc_usleep(2000);
+	}
+	return NULL;
 }
 
 static void *emul_thread_func(void *arg)
@@ -827,8 +903,16 @@ void XWIN_monitor_desc::switch_to_current_mode(void)
 
 	pthread_mutex_lock(&frame_lock);
 
-	free(the_buffer);
-	free(the_shadow);
+	// Free the buffer from TWO cycles ago (the one-cycle-stale buffer).
+	// The current buffer becomes stale: the 68k thread may still hold
+	// a cached FrameBaseDiff derived from it and write through it for
+	// a few more instructions.  Freeing it here would unmap the pages
+	// and turn those writes into data aborts (the exact crash this
+	// fixes: data abort at 0x3FF4FE8000, a former mmap'd buffer addr).
+	free(stale_buffer);
+	free(stale_shadow);
+	stale_buffer = the_buffer;
+	stale_shadow = the_shadow;
 	the_shadow = NULL;
 	the_buffer_size = (height + 2) * bpr;
 	// memory_init maps (MacFrameSize >> 16) + 1 64K banks, so back the
@@ -991,6 +1075,7 @@ bool VideoInit(bool classic)
 	// desktop size tracks the fullscreen window's workspace rect (read
 	// below, before the window turns visible).
 	bool hidpi = PrefsFindBool("hidpi");
+	bool fullscreen = PrefsFindBool("fullscreen");
 	const char *mode_str = PrefsFindString("screen");
 	if (classic) {
 		display_width = 512;
@@ -1029,8 +1114,9 @@ bool VideoInit(bool classic)
 	// keep the ADB mouse in absolute mode and feed ADBMouseMoved() the
 	// Mac-screen coordinates of the host cursor (see on_xwin_event).
 	ADBSetRelMouseMode(false);
-	xwin_fullscreen(xwin);
 
+	if (fullscreen)
+		xwin_fullscreen(xwin);
 	// xwin_fullscreen() waited on the x server, which recomputed the
 	// workspace rect for the MAX state into the shared xinfo: that is
 	// the display size the guest desktop runs at.  Classic keeps its
@@ -1084,12 +1170,25 @@ bool VideoInit(bool classic)
 
 	xwin_set_visible(xwin, true);
 
+	// Start the present thread: the blocking repaint IPC runs there,
+	// off the x event loop (see present_thread_func)
+	present_thread_active = true;
+	pthread_create(&present_thread_id, NULL, present_thread_func, NULL);
+
 	printf("Using EwokOS xwin video output (%dx%d)\n", display_width, display_height);
 	return true;
 }
 
 void VideoExit(void)
 {
+	// Stop the present thread before tearing the window down, so it
+	// can't call xwin_repaint() on a closed xwin
+	present_thread_active = false;
+	if (present_thread_id != 0) {
+		pthread_join(present_thread_id, NULL);
+		present_thread_id = 0;
+	}
+
 	// x_run() has already returned on the main thread by the time we
 	// get here (see VideoRunLoop); just tear the window down
 	if (x_context != NULL)
@@ -1107,6 +1206,10 @@ void VideoExit(void)
 		graph_free(stale_frame_graph);
 		stale_frame_graph = NULL;
 	}
+	free(stale_buffer);
+	stale_buffer = NULL;
+	free(stale_shadow);
+	stale_shadow = NULL;
 	free(the_buffer);
 	the_buffer = NULL;
 	free(the_shadow);
@@ -1142,15 +1245,30 @@ void VideoInterrupt(void)
 	// the guest's 60Hz cadence even when no further input arrives
 	ADBVBLTick();
 
+	// VBL-synchronous position push: write the latest host pointer into
+	// the guest's cursor low memory NOW, before the guest's VBL tasks
+	// run (the interrupt dispatch calls them right after VideoInterrupt),
+	// so the position is as fresh as possible when the guest couples the
+	// cursor.  Deliberately does NOT touch move_pending/injected_*/
+	// last_move_flush_ms: the paced flush_pending_move() in xwin_service
+	// must keep firing at its own 16ms cadence — it is what keeps the
+	// INTFLAG_ADB dispatch rhythm alive during motion, and killing it
+	// (dedup against a VBL-updated injected_*) measurably slowed the
+	// guest's cursor coupling.  adb_push_position() is idempotent, so
+	// the duplicate write from that path is a no-op.
+	if (move_pending)
+		ADBMouseVBLFlush(pending_mac_x, pending_mac_y);
+
 	// Adaptive frame scan: while the guest keeps drawing, scan on every
 	// VBL; after 12 change-free scans (~200ms) back off to a 5Hz scan —
 	// the full-frame compare is the dominant idle cost on this thread.
 	// Input-driven redraws are additionally covered by the x thread's
 	// input-paced scan, so typing/mouse tracking stay at full rate.
 	static uint32_t quiet_vbls = 0;
-	if ((quiet_vbls < 12 || (quiet_vbls % 12) == 0) && scan_convert_rows())
+	if ((quiet_vbls < 12 || (quiet_vbls % 12) == 0) && scan_convert_rows()) {
 		quiet_vbls = 0;
-	else
+		adb_guest_drew();	// guest redrawing: extend the throttle window
+	} else
 		quiet_vbls++;
 }
 
