@@ -1128,12 +1128,18 @@ bool VideoInit(bool classic)
 	}
 
 	if(hidpi && display_width >= 1280) {
-		display_width = display_width / 2;
-		display_height = display_height / 2;
+		int dw = display_width / 2;
+		int dh = display_height / 2;
+		if(dw >= 480 &&	dh >= 320) {
+			display_width = dw;
+			display_height = dh;
+		}
 	}
 
-	if (display_width < 320) display_width = 320;
+	if (display_width < 480) display_width = 480;
 	if (display_width & 7) display_width &= ~7;
+	if (display_height < 320) display_height = 320;
+	if (display_height & 7) display_height &= ~7;
 
 	video_depth default_depth;
 	switch (display_depth) {
