@@ -34,6 +34,7 @@
 using std::string;
 
 #include "prefs.h"
+#include "disk.h"
 
 
 // Platform-specific preferences items
@@ -62,11 +63,20 @@ static string prefs_path;
 /*
  *  Auto-detect assets shipped next to the executable (EwokOS):
  *  if the configured "rom" does not exist, use the first regular file in
- *  <app dir>/res/roms; every regular file in <app dir>/res/disks gets a
- *  copy in <home>/docs/macemu/disks (like minivmac) which is added as a
- *  "disk" volume unless it is already listed, so guest writes persist.
- *  Missing user copies are not created here (LoadPrefs runs before the
- *  window exists); they are recorded and copied by
+ *  <app dir>/res/roms.  Disk volumes come from two places: .dsk images
+ *  are mounted ONLY from <home>/docs/macemu/disks (writable, guest
+ *  writes persist; the .dsk files shipped in res/disks are copied
+ *  there on first run, and the user can add their own); .iso images
+ *  are not copied, they are loaded from <app dir>/res/disks, real
+ *  ISO 9660 ones read-only as "cdrom" drives, misnamed raw disk
+ *  images (no CD001 PVD) read-only as disks.  Boot order: every image
+ *  with valid boot blocks and a blessed System Folder is a candidate;
+ *  with a single candidate it boots automatically, with two or more
+ *  AssetsBootChoose() asks the user which one to start from once the
+ *  window is up.  The chosen volume is moved to the front of the
+ *  "disk" list.
+ *  Missing .dsk copies are not created here (LoadPrefs runs before
+ *  the window exists); they are recorded and copied by
  *  AssetsPrepareUserDisks() once the window is visible, with a copy
  *  icon shown in the window while it runs.
  */
@@ -75,6 +85,26 @@ static bool is_regular_file(const char *path)
 {
 	struct stat st;
 	return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static bool has_suffix_ci(const char *name, const char *suffix)
+{
+	size_t name_len = strlen(name);
+	size_t suf_len = strlen(suffix);
+
+	if (name_len < suf_len)
+		return false;
+	name += name_len - suf_len;
+	for (size_t i = 0; i < suf_len; i++) {
+		char a = name[i], b = suffix[i];
+		if (a >= 'A' && a <= 'Z')
+			a += 'a' - 'A';
+		if (b >= 'A' && b <= 'Z')
+			b += 'a' - 'A';
+		if (a != b)
+			return false;
+	}
+	return true;
 }
 
 /*
@@ -105,6 +135,110 @@ static bool is_supported_rom(const char *path)
 	}
 	return ok;
 }
+
+/*
+ *  ISO 9660 images carry a primary volume descriptor (type 1, "CD001")
+ *  at logical block 16.  Files named .iso without one are raw disk
+ *  images (e.g. a bootable HFS installer volume) and must be mounted
+ *  as disks, not CD-ROM drives.
+ */
+
+static bool is_iso9660_image(const char *path)
+{
+	unsigned char buf[5];
+	bool ok = false;
+
+	int fd = open(path, O_RDONLY);
+	if (fd >= 0) {
+		if (lseek(fd, 16 * 2048 + 1, SEEK_SET) == 16 * 2048 + 1) {
+			ssize_t got = 0;
+			while (got < (ssize_t)sizeof(buf)) {
+				ssize_t r = read(fd, buf + got, sizeof(buf) - got);
+				if (r <= 0)
+					break;
+				got += r;
+			}
+			if (got == (ssize_t)sizeof(buf))
+				ok = memcmp(buf, "CD001", 5) == 0;
+		}
+		close(fd);
+	}
+	return ok;
+}
+
+/*
+ *  A raw HFS image can boot when it carries valid boot blocks
+ *  (bbID 'lk'), an HFS master directory block ('BD') and a blessed
+ *  System Folder (the boot directory ID in drFndrInfo is non-zero).
+ *  Used to pick the boot volume: a bootable .dsk wins, otherwise a
+ *  bootable raw installer image is used.
+ */
+
+static bool read_at_fd(int fd, off_t off, void *buf, size_t len)
+{
+	if (lseek(fd, off, SEEK_SET) != off)
+		return false;
+	size_t got = 0;
+	while (got < len) {
+		ssize_t r = read(fd, (char *)buf + got, len - got);
+		if (r <= 0)
+			return false;
+		got += (size_t)r;
+	}
+	return true;
+}
+
+static bool is_bootable_hfs_image(const char *path, char *vol_name,
+	size_t vol_name_size)
+{
+	unsigned char bb_id[2], mdb_sig[2], blessed[4];
+	bool ok = false;
+
+	if (vol_name != NULL && vol_name_size != 0)
+		vol_name[0] = '\0';
+
+	int fd = open(path, O_RDONLY);
+	if (fd >= 0) {
+		ok = read_at_fd(fd, 0, bb_id, 2) &&
+			bb_id[0] == 0x4c && bb_id[1] == 0x4b &&
+			read_at_fd(fd, 1024, mdb_sig, 2) &&
+			mdb_sig[0] == 'B' && mdb_sig[1] == 'D' &&
+			read_at_fd(fd, 1024 + 92, blessed, 4) &&
+			(blessed[0] | blessed[1] | blessed[2] | blessed[3]) != 0;
+		// Volume name (drVN, Pascal string at MDB+36) for the boot
+		// chooser; printable ASCII only
+		if (ok && vol_name != NULL && vol_name_size != 0) {
+			unsigned char vn[28];
+			if (read_at_fd(fd, 1024 + 36, vn, sizeof(vn))) {
+				size_t n = vn[0];
+				if (n > sizeof(vn) - 1)
+					n = sizeof(vn) - 1;
+				size_t o = 0;
+				for (size_t j = 1; j <= n && o + 1 < vol_name_size; j++) {
+					char c = (char)vn[j];
+					if (c >= 0x20 && c < 0x7f)
+						vol_name[o++] = c;
+				}
+				vol_name[o] = '\0';
+			}
+		}
+		close(fd);
+	}
+	return ok;
+}
+
+/*
+ *  Boot volume candidates: more than one bootable image defers the
+ *  choice to AssetsBootChoose() which asks the user (chooser UI in
+ *  video_xwin.cpp) once the window is up.
+ */
+#define MAX_BOOT_CHOICES 8
+static char boot_choice_entries[MAX_BOOT_CHOICES][514];
+static char boot_choice_names[MAX_BOOT_CHOICES][64];
+// Must match ICON_* in video_xwin.cpp: 0 floppy, 1 hdd, 2 cd
+static int boot_choice_icon[MAX_BOOT_CHOICES];
+static int boot_choice_count = 0;
+static bool boot_choice_pending = false;
 
 static size_t write_all_fd(int fd, const void *buffer, size_t count)
 {
@@ -166,11 +300,6 @@ static bool copy_file_if_needed(const char *src_path, const char *dst_path,
 	if (buffer == NULL)
 		return false;
 
-	if (access(dst_path, F_OK) == 0) {
-		free(buffer);
-		return true;
-	}
-
 	int src_fd = open(src_path, O_RDONLY);
 	if (src_fd < 0) {
 		free(buffer);
@@ -178,6 +307,21 @@ static bool copy_file_if_needed(const char *src_path, const char *dst_path,
 	}
 	if (fstat(src_fd, &st) == 0)
 		file_size = st.st_size;
+
+	// A complete copy already exists: nothing to do.  A size
+	// mismatch is a partial leftover (interrupted run): replace it
+	struct stat dst_st;
+	if (stat(dst_path, &dst_st) == 0) {
+		if (dst_st.st_size == file_size) {
+			free(buffer);
+			close(src_fd);
+			return true;
+		}
+		printf("WARNING: %s is incomplete (%lld of %lld bytes), "
+			"copying again\n", dst_path, (long long)dst_st.st_size,
+			(long long)file_size);
+		unlink(dst_path);
+	}
 
 	int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 	if (dst_fd < 0) {
@@ -227,6 +371,36 @@ static char pending_disk_names[MAX_PENDING_DISKS][256];
 static int pending_disk_count = 0;
 static char pending_src_dir[256];
 static char pending_dst_dir[256];
+
+// Move a "disk" prefs entry to the front of the list (it becomes
+// drive 1, the first bootable volume in the drive queue)
+static void move_disk_entry_first(const char *entry)
+{
+	char entries[MAX_PENDING_DISKS][514];
+	int count = 0;
+
+	for (int i = 0; ; i++) {
+		const char *p = PrefsFindString("disk", i);
+		if (p == NULL)
+			break;
+		if (count < MAX_PENDING_DISKS)
+			snprintf(entries[count++], sizeof(entries[0]), "%s", p);
+	}
+	if (count == 0 || strcmp(entries[0], entry) == 0)
+		return;
+	bool found = false;
+	for (int i = 0; i < count; i++)
+		if (strcmp(entries[i], entry) == 0)
+			found = true;
+	if (!found)
+		return;
+	for (int i = count; i-- > 0; )
+		PrefsRemoveItem("disk", i);
+	PrefsAddString("disk", entry);
+	for (int i = 0; i < count; i++)
+		if (strcmp(entries[i], entry) != 0)
+			PrefsAddString("disk", entries[i]);
+}
 
 static bool get_user_disks_dir(char *path, size_t size)
 {
@@ -286,15 +460,28 @@ static void autodetect_assets(void)
 		}
 	}
 
-	// Disk volumes: prefer a writable copy in <home>/docs/macemu/disks
-	// (like minivmac), so guest writes persist.  Missing user copies are
-	// deferred to AssetsPrepareUserDisks() which runs once the window is
-	// visible; the prefs already point at the future user copy, and
-	// AssetsPrepareUserDisks() finishes before DiskInit() opens the drives.
+	// Disk volumes:
+	// - .dsk images are mounted ONLY from <home>/docs/macemu/disks so
+	//   guest writes persist.  The .dsk files shipped in res/disks are
+	//   copied there; missing copies are deferred to
+	//   AssetsPrepareUserDisks() which runs once the window is
+	//   visible (the prefs already point at the future user copy and
+	//   AssetsPrepareUserDisks() finishes before DiskInit() opens the
+	//   drives).  The user can also add their own .dsk files, picked
+	//   up by the user-dir scan below.
+	// - .iso images are never copied: real ISO 9660 ones are mounted
+	//   read-only from res/disks as CD-ROM drives, misnamed raw disk
+	//   images (no CD001 PVD) as read-only disks.  After the scan the
+	//   boot volume is chosen among all bootable images (see the boot
+	//   volume selection below) and moved to the front of the "disk"
+	//   list so it becomes drive 1 and the first bootable volume in
+	//   the drive queue.
 	char disks_dir[256];
 	char user_disks_dir[256];
 	snprintf(disks_dir, sizeof(disks_dir), "%s/disks", res_dir);
-	if (!get_user_disks_dir(user_disks_dir, sizeof(user_disks_dir)))
+	if (get_user_disks_dir(user_disks_dir, sizeof(user_disks_dir)))
+		ensure_dir_exists(user_disks_dir);
+	else
 		user_disks_dir[0] = '\0';
 	DIR *d = opendir(disks_dir);
 	if (d != NULL) {
@@ -302,20 +489,102 @@ static void autodetect_assets(void)
 		while ((de = readdir(d)) != NULL) {
 			if (de->d_name[0] == '.')
 				continue;
+			// Only .dsk and .iso are served from res/disks
+			bool dsk_suffix = has_suffix_ci(de->d_name, ".dsk");
+			bool iso_suffix = has_suffix_ci(de->d_name, ".iso");
+			if (!dsk_suffix && !iso_suffix)
+				continue;
 			char src_path[512];
 			snprintf(src_path, sizeof(src_path), "%s/%s", disks_dir, de->d_name);
 			if (!is_regular_file(src_path))
 				continue;
 
-			// Prefer the writable user copy; fall back to the shipped file
+			// Real ISO 9660 images stay in the app's res/disks and are
+			// mounted read-only as CD-ROM drives (never copied to the
+			// user dir); misnamed raw disk images fall through to the
+			// disk handling below
+			if (iso_suffix && is_iso9660_image(src_path)) {
+				// Migrate stale "disk" entries (shipped path or an old
+				// user-dir copy)
+				char old_user_path[512];
+				if (user_disks_dir[0] != '\0')
+					snprintf(old_user_path, sizeof(old_user_path),
+						"%s/%s", user_disks_dir, de->d_name);
+				else
+					old_user_path[0] = '\0';
+				if (old_user_path[0] != '\0' &&
+				    is_regular_file(old_user_path))
+					unlink(old_user_path);
+				for (int i = 0; ; i++) {
+					const char *p = PrefsFindString("disk", i);
+					if (p == NULL)
+						break;
+					if (strcmp(p, src_path) == 0 ||
+					    (old_user_path[0] != '\0' &&
+					     strcmp(p, old_user_path) == 0)) {
+						PrefsRemoveItem("disk", i);
+						i--;
+					}
+				}
+				bool listed = false;
+				for (int i = 0; ; i++) {
+					const char *p = PrefsFindString("cdrom", i);
+					if (p == NULL)
+						break;
+					if (strcmp(p, src_path) == 0) {
+						listed = true;
+						break;
+					}
+				}
+				if (!listed)
+					PrefsAddString("cdrom", src_path);
+				printf("autodetect: CD-ROM image %s\n", src_path);
+				continue;
+			}
+
+			// Raw disk image in .iso clothing: mount it read-only from
+			// res/disks ("*" prefix, like a real CD) so guest writes
+			// cannot corrupt the shipped file
+			char ro_path[514];
+			if (iso_suffix) {
+				printf("autodetect: %s is not ISO 9660, using it as a "
+					"read-only disk image\n", de->d_name);
+				snprintf(ro_path, sizeof(ro_path), "*%s", src_path);
+				// Drop a stale user-dir copy (old versions copied
+				// .iso files) and migrate its prefs entry
+				if (user_disks_dir[0] != '\0') {
+					char stale_path[512];
+					snprintf(stale_path, sizeof(stale_path), "%s/%s",
+						user_disks_dir, de->d_name);
+					if (is_regular_file(stale_path))
+						unlink(stale_path);
+					for (int i = 0; ; i++) {
+						const char *p = PrefsFindString("disk", i);
+						if (p == NULL)
+							break;
+						if (strcmp(p, stale_path) == 0) {
+							PrefsReplaceString("disk", ro_path, i);
+							break;
+						}
+					}
+				}
+			}
+
+			// .dsk images mount ONLY from the user dir; .iso raw
+			// images read-only from res/disks
 			char user_path[512];
-			const char *mount_path = src_path;
-			if (user_disks_dir[0] != '\0') {
+			const char *mount_path;
+			if (iso_suffix) {
+				mount_path = ro_path;
+			} else if (user_disks_dir[0] == '\0') {
+				printf("autodetect: no user dir, skipping %s\n",
+					de->d_name);
+				continue;
+			} else {
 				snprintf(user_path, sizeof(user_path), "%s/%s",
 					user_disks_dir, de->d_name);
-				if (is_regular_file(user_path)) {
-					mount_path = user_path;
-				} else if (pending_disk_count < MAX_PENDING_DISKS) {
+				if (!is_regular_file(user_path) &&
+				    pending_disk_count < MAX_PENDING_DISKS) {
 					// No user copy yet: create it once the window is up
 					snprintf(pending_disk_names[pending_disk_count],
 						sizeof(pending_disk_names[0]), "%s", de->d_name);
@@ -324,8 +593,8 @@ static void autodetect_assets(void)
 					snprintf(pending_dst_dir, sizeof(pending_dst_dir),
 						"%s", user_disks_dir);
 					pending_disk_count++;
-					mount_path = user_path;
 				}
+				mount_path = user_path;
 			}
 
 			bool listed = false;
@@ -349,16 +618,205 @@ static void autodetect_assets(void)
 		}
 		closedir(d);
 	}
+
+	// The user dir is user-managed: pick up .dsk files the user added
+	// there on their own (no shipped counterpart); never delete user
+	// files
+	if (user_disks_dir[0] != '\0') {
+		DIR *ud = opendir(user_disks_dir);
+		if (ud != NULL) {
+			struct dirent *de;
+			while ((de = readdir(ud)) != NULL) {
+				if (de->d_name[0] == '.' ||
+				    !has_suffix_ci(de->d_name, ".dsk"))
+					continue;
+				char user_path[512];
+				snprintf(user_path, sizeof(user_path), "%s/%s",
+					user_disks_dir, de->d_name);
+				if (!is_regular_file(user_path))
+					continue;
+				bool listed = false;
+				for (int i = 0; ; i++) {
+					const char *p = PrefsFindString("disk", i);
+					if (p == NULL)
+						break;
+					if (strcmp(p, user_path) == 0) {
+						listed = true;
+						break;
+					}
+				}
+				if (!listed)
+					PrefsAddString("disk", user_path);
+			}
+			closedir(ud);
+		}
+	}
+
+	// Drop "disk" entries whose file no longer exists (a removed user
+	// disk, an old res/disks path); pending user copies are exempt,
+	// AssetsPrepareUserDisks() creates them before the drives open
+	for (int i = 0; ; i++) {
+		const char *p = PrefsFindString("disk", i);
+		if (p == NULL)
+			break;
+		const char *path = (p[0] == '*') ? p + 1 : p;
+		if (is_regular_file(path))
+			continue;
+		bool pending = false;
+		if (pending_dst_dir[0] != '\0' &&
+		    strncmp(path, pending_dst_dir, strlen(pending_dst_dir)) == 0) {
+			const char *base = strrchr(path, '/');
+			if (base != NULL) {
+				base++;
+				for (int j = 0; j < pending_disk_count; j++)
+					if (strcmp(pending_disk_names[j], base) == 0) {
+						pending = true;
+						break;
+					}
+			}
+		}
+		if (pending)
+			continue;
+		printf("autodetect: dropping missing disk %s\n", p);
+		PrefsRemoveItem("disk", i);
+		i--;
+	}
+
+	// Boot volume selection: every disk image with valid boot blocks
+	// (bbID 'lk') and a blessed System Folder is a boot candidate,
+	// .dsk volumes and raw installer images alike.  With a single
+	// candidate it boots automatically; with TWO OR MORE the choice
+	// is deferred: the first candidate becomes the default boot volume
+	// now and AssetsBootChoose() asks the user once the window is up
+	// (chooser UI in video_xwin.cpp).  The chosen entry is moved to
+	// the front of the "disk" list; the list order becomes the drive
+	// queue order, so it is drive 1 and the first bootable volume the
+	// ROM finds.
+	char entries[MAX_PENDING_DISKS][514];
+	int count = 0;
+	for (int i = 0; ; i++) {
+		const char *p = PrefsFindString("disk", i);
+		if (p == NULL)
+			break;
+		if (count < MAX_PENDING_DISKS)
+			snprintf(entries[count++], sizeof(entries[0]), "%s", p);
+	}
+	struct boot_cand {
+		char entry[514];
+		char name[64];
+		bool is_dsk;
+		int icon;
+	};
+	// Static: too large for comfort on EwokOS thread stacks
+	static struct boot_cand cands[MAX_BOOT_CHOICES];
+	int ncand = 0;
+	for (int i = 0; i < count && ncand < MAX_BOOT_CHOICES; i++) {
+		const char *path = entries[i];
+		if (path[0] == '*')
+			path++;
+		bool is_dsk = has_suffix_ci(path, ".dsk");
+		char sniff[514];
+		snprintf(sniff, sizeof(sniff), "%s", path);
+		if (is_dsk) {
+			// A pending user copy does not exist yet: sniff the
+			// shipped file it will be created from
+			size_t udl = strlen(user_disks_dir);
+			if (!is_regular_file(sniff) && udl != 0 &&
+			    strncmp(sniff, user_disks_dir, udl) == 0)
+				snprintf(sniff, sizeof(sniff), "%s%s", disks_dir,
+					path + udl);
+		}
+		char vol_name[64];
+		if (!is_bootable_hfs_image(sniff, vol_name, sizeof(vol_name)))
+			continue;
+		const char *label = vol_name[0] != '\0' ?
+			vol_name : strrchr(path, '/');
+		if (label == NULL)
+			label = path;
+		else if (vol_name[0] == '\0')
+			label++;
+		snprintf(cands[ncand].entry, sizeof(cands[ncand].entry), "%s",
+			entries[i]);
+		snprintf(cands[ncand].name, sizeof(cands[ncand].name), "%s",
+			label);
+		cands[ncand].is_dsk = is_dsk;
+		// Icon: raw installer image = cd; a .dsk is a floppy image
+		// only when it is floppy-sized, otherwise a hard disk
+		if (!is_dsk) {
+			cands[ncand].icon = 2;
+		} else {
+			struct stat ist;
+			cands[ncand].icon =
+				(stat(sniff, &ist) == 0 && ist.st_size <= 2*1024*1024)
+				? 0 : 1;
+		}
+		ncand++;
+	}
+	// Chooser order: .dsk volumes first, then raw images (display
+	// order only; the user picks).  The first entry doubles as the
+	// default boot volume and the cancel fallback.
+	boot_choice_count = 0;
+	for (int want_dsk = 1; want_dsk >= 0; want_dsk--) {
+		for (int i = 0; i < ncand; i++) {
+			if ((int)cands[i].is_dsk != want_dsk)
+				continue;
+			snprintf(boot_choice_entries[boot_choice_count],
+				sizeof(boot_choice_entries[0]), "%s", cands[i].entry);
+			snprintf(boot_choice_names[boot_choice_count],
+				sizeof(boot_choice_names[0]), "%s", cands[i].name);
+			boot_choice_icon[boot_choice_count] = cands[i].icon;
+			boot_choice_count++;
+		}
+	}
+	// Disambiguate identical volume names (an installed system and the
+	// installer are both called "Mac OS 8") by appending the file name
+	for (int i = 0; i < boot_choice_count; i++) {
+		for (int j = i + 1; j < boot_choice_count; j++) {
+			if (strcmp(boot_choice_names[i], boot_choice_names[j]) != 0)
+				continue;
+			for (int k = i; k <= j; k += (j - i)) {
+				const char *e = boot_choice_entries[k];
+				if (e[0] == '*')
+					e++;
+				const char *base = strrchr(e, '/');
+				base = (base != NULL) ? base + 1 : e;
+				char tmp[64];
+				snprintf(tmp, sizeof(tmp), "%s (%s)",
+					boot_choice_names[k], base);
+				snprintf(boot_choice_names[k],
+					sizeof(boot_choice_names[0]), "%s", tmp);
+			}
+		}
+	}
+	if (boot_choice_count > 0) {
+		printf("autodetect: boot volume %s\n", boot_choice_entries[0]);
+		move_disk_entry_first(boot_choice_entries[0]);
+		if (boot_choice_count >= 2) {
+			boot_choice_pending = true;
+			printf("autodetect: %d bootable volumes, asking the user "
+				"once the window is up\n", boot_choice_count);
+		}
+	} else {
+		printf("autodetect: no bootable disk image found\n");
+	}
+	if (PrefsFindInt32("bootdrive") == 1 &&
+	    PrefsFindInt32("bootdriver") == DiskRefNum) {
+		// Left over from an old bootcdrom run: back to automatic
+		// selection (first bootable volume in the drive queue)
+		PrefsReplaceInt32("bootdrive", 0);
+		PrefsReplaceInt32("bootdriver", 0);
+	}
 }
 
 
 /*
- *  Deferred copy of the shipped disk images into the user directory
+ *  Deferred copy of the shipped .dsk images into the user directory
  *  (EwokOS).  Called from InitAll() after the window is visible and
  *  before DiskInit() opens the drives, so the "disk" prefs already
  *  point at the user copies when they are mounted.  A "copying disk"
  *  icon with byte progress (video_xwin.cpp) is shown while it runs.
- *  On failure the affected "disk" entry falls back to the shipped file.
+ *  On failure the affected "disk" entry is dropped (.dsk images only
+ *  mount from the user directory).
  */
 
 // video_xwin.cpp splash: done/total bytes across all pending images,
@@ -383,19 +841,20 @@ static void copy_progress_cb(off_t done, off_t file_size, void *arg)
 	VideoDiskCopySplash((int)all, (int)copy_total_bytes);
 }
 
+// A pending copy failed: the user copy will never appear, so drop the
+// entry instead of mounting it (.dsk images only mount from the user
+// directory)
 static void fallback_disk_pref(const char *disk_name)
 {
-	char src_path[512];
 	char user_path[512];
 
-	snprintf(src_path, sizeof(src_path), "%s/%s", pending_src_dir, disk_name);
 	snprintf(user_path, sizeof(user_path), "%s/%s", pending_dst_dir, disk_name);
 	for (int i = 0; ; i++) {
 		const char *p = PrefsFindString("disk", i);
 		if (p == NULL)
 			break;
 		if (strcmp(p, user_path) == 0) {
-			PrefsReplaceString("disk", src_path, i);
+			PrefsRemoveItem("disk", i);
 			break;
 		}
 	}
@@ -437,8 +896,12 @@ void AssetsPrepareUserDisks(void)
 			pending_src_dir, pending_disk_names[i]);
 		snprintf(dst_path, sizeof(dst_path), "%s/%s",
 			pending_dst_dir, pending_disk_names[i]);
-		if (!copy_file_if_needed(src_path, dst_path, copy_progress_cb, NULL)) {
-			printf("WARNING: cannot copy %s to %s, using the shipped file\n",
+		if (copy_file_if_needed(src_path, dst_path, copy_progress_cb, NULL)) {
+			if (stat(dst_path, &st) == 0)
+				printf("copied %s (%lld bytes)\n", dst_path,
+					(long long)st.st_size);
+		} else {
+			printf("WARNING: cannot copy %s to %s, skipping it\n",
 				src_path, dst_path);
 			fallback_disk_pref(pending_disk_names[i]);
 		}
@@ -448,6 +911,71 @@ void AssetsPrepareUserDisks(void)
 
 	VideoDiskCopySplash(0, 0);
 	pending_disk_count = 0;
+}
+
+
+/*
+ *  Boot volume chooser (EwokOS).  Called from InitAll() after
+ *  AssetsPrepareUserDisks() and before DiskInit(): when
+ *  autodetect_assets() found two or more bootable disk images the
+ *  user picks one in the window (mouse or arrow keys + Enter,
+ *  VideoBootChooser in video_xwin.cpp).  Cancelling (Esc / window
+ *  close) keeps the default, the first candidate.  The chosen entry
+ *  is moved to the front of the "disk" list before the drives open.
+ */
+
+// video_xwin.cpp: interactive chooser, returns the chosen index or
+// -1 on cancel
+extern int VideoBootChooser(const char *const *labels, const int *icons,
+	int count);
+
+void AssetsBootChoose(void)
+{
+	if (!boot_choice_pending)
+		return;
+	boot_choice_pending = false;
+
+	// Drop candidates that are no longer listed as "disk" prefs (a
+	// failed user-copy fell back to another path): the chooser could
+	// not apply them anyway
+	for (int i = 0; i < boot_choice_count; ) {
+		bool listed = false;
+		for (int j = 0; ; j++) {
+			const char *p = PrefsFindString("disk", j);
+			if (p == NULL)
+				break;
+			if (strcmp(p, boot_choice_entries[i]) == 0) {
+				listed = true;
+				break;
+			}
+		}
+		if (listed) {
+			i++;
+			continue;
+		}
+		boot_choice_count--;
+		for (int j = i; j < boot_choice_count; j++) {
+			snprintf(boot_choice_entries[j],
+				sizeof(boot_choice_entries[0]), "%s",
+				boot_choice_entries[j + 1]);
+			snprintf(boot_choice_names[j],
+				sizeof(boot_choice_names[0]), "%s",
+				boot_choice_names[j + 1]);
+			boot_choice_icon[j] = boot_choice_icon[j + 1];
+		}
+	}
+	if (boot_choice_count < 2)
+		return;
+
+	const char *labels[MAX_BOOT_CHOICES];
+	for (int i = 0; i < boot_choice_count; i++)
+		labels[i] = boot_choice_names[i];
+	int sel = VideoBootChooser(labels, boot_choice_icon, boot_choice_count);
+	if (sel < 0 || sel >= boot_choice_count)
+		return;		// cancelled: keep the default (first candidate)
+	printf("boot choice: %s\n", boot_choice_entries[sel]);
+	// No-op when the choice already leads the list
+	move_disk_entry_first(boot_choice_entries[sel]);
 }
 
 

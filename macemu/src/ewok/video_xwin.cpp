@@ -18,6 +18,9 @@
 #include <ewoksys/keydef.h>
 #include <ewoksys/kernel_tic.h>
 #include <ewoksys/proc.h>
+#include <ewoksys/ipc.h>
+#include <ewoksys/vdevice.h>
+#include <font/font.h>
 
 extern "C" {
 #include <graph/rgb15.h>
@@ -310,6 +313,32 @@ static void draw_copy_arrow(graph_t *g, int x, int cy, int s)
 	}
 }
 
+static void draw_cd(graph_t *g, int x, int y, int s, uint32_t hole_color)
+{
+	int cx = x + s/2, cy = y + s/2;
+	int r = s/2 - 1;
+	if (r < 4)
+		r = 4;
+	// Disc with its inner ring and hub hole (transparent to the bg)
+	graph_fill_circle(g, cx, cy, r, SPLASH_FG);
+	graph_fill_circle(g, cx, cy, r/3, SPLASH_SHUTTER);
+	graph_fill_circle(g, cx, cy, r/6, hole_color);
+}
+
+static void draw_hdd(graph_t *g, int x, int y, int s)
+{
+	// Wide slab centered in the icon box (the copy destination)
+	int bw = s, bh = s/2;
+	int by = y + (s - bh)/2;
+	graph_fill_round(g, x, by, bw, bh, bh/6, SPLASH_FG);
+	// Dark vent stripe along the lower half
+	int sh = (bh/6 > 1) ? bh/6 : 1;
+	graph_fill_rect(g, x + s/10, by + bh*2/3, bw - s/5, sh, SPLASH_SHUTTER);
+	// Activity LED on the right
+	int led = (bh/5 > 2) ? bh/5 : 2;
+	graph_fill_rect(g, x + bw - s/10 - led, by + bh/6, led, led, SPLASH_LABEL);
+}
+
 static void draw_copy_splash(graph_t *g)
 {
 	int gw = g->w, gh = g->h;
@@ -330,9 +359,10 @@ static void draw_copy_splash(graph_t *g)
 	int y0 = (gh - block_h)/2;
 	int cy = y0 + s/2;
 
+	// Shipped image (floppy) copied onto the user's writable disk (hdd)
 	draw_floppy(g, x0, y0, s);
 	draw_copy_arrow(g, x0 + s + gap, cy, s);
-	draw_floppy(g, x0 + s + gap + arrow_len + gap, y0, s);
+	draw_hdd(g, x0 + s + gap + arrow_len + gap, y0, s);
 
 	// Byte progress across all pending disk images
 	int by = y0 + s + s/5;
@@ -342,6 +372,119 @@ static void draw_copy_splash(graph_t *g)
 		if (fw > bar_h)
 			graph_fill_round(g, x0, by, fw, bar_h, bar_h/2, SPLASH_FG);
 	}
+}
+
+/*
+ *  Pre-boot startup-disk chooser: AssetsBootChoose() (prefs_unix.cpp)
+ *  found two or more bootable disk images.  Arrow keys or taps move
+ *  the selection, Enter / Start / a second tap confirms, Esc cancels.
+ *  Drawn from on_xwin_repaint while boot_chooser is set, with the
+ *  input loop polling the x server directly (VideoBootChooser below)
+ *  because x_run() is not running yet at that point.
+ */
+
+static bool boot_chooser = false;
+static int chooser_count = 0;
+static int chooser_sel = 0;
+
+#define CHOOSER_MAX   8
+#define CHOOSER_PANEL 0xff242424
+#define CHOOSER_SEL   0xff666868
+#define CHOOSER_TEXT  0xffe8e8e8
+#define CHOOSER_DIM   0xff8a8a8a
+#define CHOOSER_DARK  0xff151515
+
+// Row icon types: floppy = blank/data .dsk, hdd = bootable .dsk
+// (a system disk), cd = raw installer image
+#define ICON_FLOPPY 0
+#define ICON_HDD    1
+#define ICON_CD     2
+
+static char chooser_labels[CHOOSER_MAX][64];
+static int chooser_icon[CHOOSER_MAX];
+static font_t *chooser_font = NULL;
+
+typedef struct { int x, y, w, h; } chooser_rect_t;
+static chooser_rect_t chooser_row_rect[CHOOSER_MAX];
+static chooser_rect_t chooser_start_rect;
+
+static bool chooser_rect_hit(const chooser_rect_t *r, int x, int y)
+{
+	return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h;
+}
+
+static void draw_boot_chooser(graph_t *g)
+{
+	int gw = g->w, gh = g->h;
+	graph_fill_rect(g, 0, 0, gw, gh, SPLASH_BG);
+
+	// Sizes follow the window, like the letterboxed guest frame does
+	int fs = gh / 26;
+	if (fs < 14) fs = 14;
+	if (fs > 26) fs = 26;
+	int row_h = fs * 5 / 2;
+	int icon_s = fs * 3 / 2;
+	int pad = fs;
+	int panel_w = gw * 2 / 3;
+	if (panel_w > 640) panel_w = 640;
+	if (panel_w < 320) panel_w = (gw - 16 < 320) ? gw - 16 : 320;
+	int btn_h = row_h - fs / 3;
+	int panel_h = pad + fs * 2 + chooser_count * row_h +
+		fs / 2 + btn_h + fs / 2 + fs + pad;
+	int px = (gw - panel_w) / 2;
+	int py = (gh - panel_h) / 2;
+	if (py < 8) py = 8;
+	graph_fill_round(g, px, py, panel_w, panel_h, fs / 2, CHOOSER_PANEL);
+
+	if (chooser_font != NULL)
+		graph_draw_text_font_align(g, px, py + pad, panel_w, fs * 2,
+			"Startup Disk", chooser_font, fs + fs / 6, SPLASH_LABEL,
+			FONT_ALIGN_CENTER);
+
+	// One row per bootable volume; the selection is highlighted
+	int ry = py + pad + fs * 2;
+	for (int i = 0; i < chooser_count; i++) {
+		chooser_rect_t *r = &chooser_row_rect[i];
+		r->x = px + fs / 2;
+		r->y = ry + i * row_h;
+		r->w = panel_w - fs;
+		r->h = row_h - fs / 3;
+		bool sel = (i == chooser_sel);
+		if (sel)
+			graph_fill_round(g, r->x, r->y, r->w, r->h, fs / 3, CHOOSER_SEL);
+		int ix = r->x + fs / 2, iy = r->y + (r->h - icon_s) / 2;
+		switch (chooser_icon[i]) {
+		case ICON_CD:
+			draw_cd(g, ix, iy, icon_s, sel ? CHOOSER_SEL : CHOOSER_PANEL);
+			break;
+		case ICON_HDD:
+			draw_hdd(g, ix, iy, icon_s);
+			break;
+		default:
+			draw_floppy(g, ix, iy, icon_s);
+			break;
+		}
+		if (chooser_font != NULL)
+			graph_draw_text_font(g, r->x + fs / 2 + icon_s + fs / 2,
+				r->y + (r->h - fs) / 2, chooser_labels[i], chooser_font,
+				fs, sel ? CHOOSER_DARK : CHOOSER_TEXT);
+	}
+
+	// Start button confirms the highlighted volume
+	chooser_rect_t *sr = &chooser_start_rect;
+	sr->w = fs * 6;
+	sr->h = btn_h;
+	sr->x = px + (panel_w - sr->w) / 2;
+	sr->y = ry + chooser_count * row_h + fs / 2;
+	graph_fill_round(g, sr->x, sr->y, sr->w, sr->h, fs / 3, SPLASH_FG);
+	if (chooser_font != NULL)
+		graph_draw_text_font_align(g, sr->x, sr->y, sr->w, sr->h,
+			"Start", chooser_font, fs, CHOOSER_DARK, FONT_ALIGN_CENTER);
+
+	if (chooser_font != NULL)
+		graph_draw_text_font_align(g, px, sr->y + sr->h, panel_w, fs * 3 / 2,
+			"arrow keys + Enter, or tap", chooser_font, fs * 3 / 4,
+			CHOOSER_DIM, FONT_ALIGN_CENTER);
 }
 
 /*
@@ -613,6 +756,12 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 	(void)win;
 	if (g == NULL)
 		return;
+
+	// Startup-disk chooser replaces the guest frame while active
+	if (boot_chooser) {
+		draw_boot_chooser(g);
+		return;
+	}
 
 	// Pre-boot disk-copy splash replaces the (still empty) guest frame
 	if (copy_splash) {
@@ -1108,7 +1257,7 @@ bool VideoInit(bool classic)
 	xwin->on_resize = on_xwin_resize;
 	xwin->on_event = on_xwin_event;
 	xwin->on_repaint = on_xwin_repaint;
-	xwin_hide_cursor(xwin, true);
+	//xwin_hide_cursor(xwin, true);
 	// This backend hides the host cursor and lets the guest draw its own,
 	// so the guest cursor must track the real mouse position exactly:
 	// keep the ADB mouse in absolute mode and feed ADBMouseMoved() the
@@ -1128,8 +1277,8 @@ bool VideoInit(bool classic)
 	}
 
 	if(hidpi && display_width >= 1280) {
-		int dw = display_width / 2;
-		int dh = display_height / 2;
+		int dw = display_width * 2 / 3;
+		int dh = display_height * 2 / 3;
 		if(dw >= 480 &&	dh >= 320) {
 			display_width = dw;
 			display_height = dh;
@@ -1310,4 +1459,156 @@ void VideoDiskCopySplash(int done, int total)
 		copy_splash_total = total;
 	}
 	xwin_repaint(xwin);
+}
+
+
+/*
+ *  Startup-disk chooser for AssetsBootChoose() (prefs_unix.cpp): two
+ *  or more bootable disk images were found and the user picks one.
+ *  Runs on the main thread before x_run() starts (same phase as the
+ *  copy splash above), so events are polled straight from the x
+ *  server the same way x_run() does and xwin_repaint() pushes every
+ *  redraw synchronously.  Arrow keys or taps move the selection,
+ *  Enter / Start / a second tap on the same row confirms, Esc or a
+ *  window close cancels (returns -1, the caller keeps its default).
+ *  Returns the index of the chosen volume.
+ */
+
+int VideoBootChooser(const char *const *labels, const int *icons, int count)
+{
+	if (xwin == NULL || labels == NULL || count < 2)
+		return -1;
+	if (count > CHOOSER_MAX)
+		count = CHOOSER_MAX;
+	if (chooser_font == NULL)
+		chooser_font = font_new(DEFAULT_SYSTEM_FONT, true);
+
+	int xserv_pid = dev_get_pid("/dev/x");
+
+	// Drain events that queued up before the chooser appeared (e.g.
+	// touches during the copy splash), so a stale press cannot
+	// confirm by accident
+	if (xserv_pid >= 0) {
+		for (;;) {
+			proto_t out;
+			PF->init(&out);
+			int have = -1;
+			if (dev_cntl_by_pid(xserv_pid, X_DCNTL_GET_EVT, NULL, &out) == 0)
+				have = (int)proto_read_int(&out);
+			PF->clear(&out);
+			if (have != 0)
+				break;
+		}
+	}
+
+	chooser_count = count;
+	chooser_sel = 0;
+	for (int i = 0; i < count; i++) {
+		snprintf(chooser_labels[i], sizeof(chooser_labels[i]), "%s",
+			labels[i] != NULL ? labels[i] : "");
+		int ic = (icons != NULL) ? icons[i] : ICON_FLOPPY;
+		chooser_icon[i] = (ic >= ICON_FLOPPY && ic <= ICON_CD) ?
+			ic : ICON_FLOPPY;
+	}
+	boot_chooser = true;
+	xwin_repaint(xwin);
+	printf("xwin: boot chooser, %d bootable volumes\n", count);
+
+	int result = -1;
+	bool done = false;
+	while (!done && !emerg_quit) {
+		xevent_t ev;
+		bool got = false;
+		if (xserv_pid >= 0) {
+			proto_t out;
+			PF->init(&out);
+			if (dev_cntl_by_pid(xserv_pid, X_DCNTL_GET_EVT, NULL, &out) == 0 &&
+			    proto_read_int(&out) == 0) {
+				proto_read_to(&out, &ev, sizeof(ev));
+				got = true;
+			}
+			PF->clear(&out);
+		}
+		if (!got) {
+			proc_usleep(16 * 1000);
+			continue;
+		}
+
+		switch (ev.type) {
+		case XEVT_IM:
+			if (ev.state != XIM_STATE_PRESS)
+				break;
+			switch (ev.value.im.key_code) {
+			case KEY_UP: case KEY_LEFT:
+				chooser_sel = (chooser_sel + chooser_count - 1) %
+					chooser_count;
+				xwin_repaint(xwin);
+				break;
+			case KEY_DOWN: case KEY_RIGHT:
+				chooser_sel = (chooser_sel + 1) % chooser_count;
+				xwin_repaint(xwin);
+				break;
+			case KEY_ENTER: case '\n':
+				result = chooser_sel;
+				done = true;
+				break;
+			case KEY_ESC:
+				done = true;	// cancel: result stays -1
+				break;
+			}
+			break;
+		case XEVT_MOUSE:
+			if (ev.state != MOUSE_STATE_DOWN)
+				break;
+			{
+				gpos_t pos = xwin_get_inside_pos(xwin,
+					ev.value.mouse.x, ev.value.mouse.y);
+				int hit = -1;
+				for (int i = 0; i < chooser_count; i++) {
+					if (chooser_rect_hit(&chooser_row_rect[i],
+							pos.x, pos.y)) {
+						hit = i;
+						break;
+					}
+				}
+				if (hit >= 0) {
+					if (hit == chooser_sel) {
+						// Second tap on the same row confirms
+						result = hit;
+						done = true;
+					} else {
+						chooser_sel = hit;
+						xwin_repaint(xwin);
+					}
+				} else if (chooser_rect_hit(&chooser_start_rect,
+						pos.x, pos.y)) {
+					result = chooser_sel;
+					done = true;
+				}
+			}
+			break;
+		case XEVT_WIN:
+			if (ev.value.window.event == XEVT_WIN_CLOSE) {
+				// Same as on_xwin_event: the normal quit path takes
+				// over once the guest runs
+				emerg_quit = true;
+				ADBKeyDown(0x7f);	// Power key
+				ADBKeyUp(0x7f);
+			} else {
+				// resize/move/focus: keep the window state coherent
+				// (xwin_event_handle repaints resizes itself, which
+				// redraws the chooser in the new geometry)
+				xwin_event_handle(xwin, &ev);
+				if (xwin->xinfo == NULL)
+					done = true;	// window destroyed under us
+			}
+			break;
+		}
+	}
+
+	boot_chooser = false;
+	if (xwin->xinfo != NULL)
+		xwin_repaint(xwin);
+	printf("xwin: boot chooser done, selection %d\n", result);
+	return result;
 }

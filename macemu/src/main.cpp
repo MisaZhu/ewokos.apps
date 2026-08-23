@@ -45,6 +45,7 @@
 // EwokOS: copy shipped disk images into the user directory with a
 // progress splash once the window is visible (prefs_unix.cpp)
 extern void AssetsPrepareUserDisks(void);
+extern void AssetsBootChoose(void);
 
 #if ENABLE_MON
 #include "mon.h"
@@ -185,6 +186,11 @@ bool InitAll(const char *vmdir)
 	// now that the window is up; must run before DiskInit() opens the
 	// drives so the prefs point at the writable user copies
 	AssetsPrepareUserDisks();
+
+	// EwokOS: if two or more .dsk volumes can boot, ask the user which
+	// one to start from (mouse or arrow keys + Enter); must run after
+	// AssetsPrepareUserDisks() and before DiskInit()
+	AssetsBootChoose();
 
 	// Init drivers
 	SonyInit();

@@ -30,6 +30,7 @@
 
 #include "sysdeps.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <vector>
 
@@ -296,9 +297,15 @@ void CDROMInit(void)
 	const char *str;
 	while ((str = PrefsFindString("cdrom", index++)) != NULL) {
 		void *fh = Sys_open(str, true);
-		if (fh)
+		if (fh) {
+			printf("CD-ROM drive: %s\n", str);
 			drives.push_back(cdrom_drive_info(fh));
+		} else {
+			printf("WARNING: cannot open CD-ROM %s\n", str);
+		}
 	}
+	if (drives.empty())
+		printf("CD-ROM: no drives found\n");
 }
 
 

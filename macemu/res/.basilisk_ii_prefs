@@ -1,6 +1,7 @@
 cpu        68040
-fpu        false
+fpu        true
 ramsize    33554432
+32bit      true
 
 nocdrom false
 nosound false
@@ -9,5 +10,5 @@ frameskip 2
 screen win/640/480/16
 modelid   14
 
-hidpi true
+hidpi false
 fullscreen  true
