@@ -155,10 +155,16 @@ static bool tick_thread_active = false;				// Flag: 60Hz thread installed
 static volatile bool tick_thread_cancel = false;	// Flag: Cancel 60Hz thread
 static pthread_t tick_thread;						// 60Hz thread
 static pthread_attr_t tick_thread_attr;				// 60Hz thread attributes
+#else
+// EwokOS xwin: no XPRAM thread (the watchdog runs inline from
+// one_second()), but the 60Hz heartbeat gets its own tick thread:
+// driving it from the x thread's on_loop callback starved it whenever
+// the x event queue was busy (x_run only calls on_loop when the queue
+// is EMPTY), so a continuous input stream stopped the guest VBL
+static bool ewok_tick_active = false;				// Flag: 60Hz thread installed
+static volatile bool ewok_tick_cancel = false;		// Flag: Cancel 60Hz thread
+static pthread_t ewok_tick_thread;					// 60Hz thread
 #endif
-// EwokOS xwin: no tick/XPRAM threads -- the 60Hz heartbeat (and the
-// inline XPRAM watchdog) is driven from the x thread's xwin_loop via
-// TickHeartbeat(), keeping macemu at 3 threads like minivmac
 
 static pthread_mutex_t intflag_lock = 0; // EwokOS: no PTHREAD_MUTEX_INITIALIZER	// Mutex to protect InterruptFlags
 #define LOCK_INTFLAGS pthread_mutex_lock(&intflag_lock)
@@ -209,6 +215,9 @@ static const char *gui_connection_path = NULL;	// GUI connection identifier
 #if defined(USE_PTHREADS_SERVICES) && !defined(USE_EWOK_XWIN)
 static void *xpram_func(void *arg);
 static void *tick_func(void *arg);
+#endif
+#ifdef USE_EWOK_XWIN
+static void *ewok_tick_func(void *arg);
 #endif
 static void one_tick(...);
 #if !EMULATED_68K
@@ -812,8 +821,18 @@ int main(int argc, char **argv)
 #ifndef USE_CPU_EMUL_SERVICES
 #ifdef USE_EWOK_XWIN
 
-	// No 60Hz tick thread on EwokOS: TickHeartbeat() is called from
-	// the x thread's xwin_loop (see video_xwin.cpp) instead
+	// 60Hz tick thread.  The heartbeat must NOT ride the x thread's
+	// on_loop callback: x_run only invokes it when the x event queue
+	// is empty, so a continuous input stream (touch drag) starved the
+	// guest VBL entirely -- multi-second input freezes.
+	// NOTE: EwokOS pthreads do not support thread attributes
+	ewok_tick_active = (pthread_create(&ewok_tick_thread, NULL, ewok_tick_func, NULL) == 0);
+	if (!ewok_tick_active) {
+		sprintf(str, GetString(STR_TICK_THREAD_ERR), strerror(errno));
+		ErrorAlert(str);
+		QuitEmulator();
+	}
+	D(bug("60Hz thread started\n"));
 
 #elif defined(HAVE_PTHREADS)
 
@@ -937,7 +956,12 @@ void QuitEmulator(void)
 		  (long)emulated_ticks_count, (long)(emulated_ticks_end - emulated_ticks_start),
 		  emulated_ticks_count * 1000000.0 / (emulated_ticks_end - emulated_ticks_start), (long)n_check_ticks));
 #elif defined(USE_EWOK_XWIN)
-	// Nothing to stop: no 60Hz tick thread on EwokOS
+	// Stop 60Hz tick thread
+	if (ewok_tick_active) {
+		ewok_tick_cancel = true;
+		pthread_join(ewok_tick_thread, NULL);
+		ewok_tick_active = false;
+	}
 #elif defined(USE_PTHREADS_SERVICES)
 	// Stop 60Hz thread
 	if (tick_thread_active) {
@@ -1259,23 +1283,30 @@ static void *tick_func(void *arg)
 
 #ifdef USE_EWOK_XWIN
 /*
- *  60Hz heartbeat for the EwokOS xwin backend.  Called from the x
- *  thread's xwin_loop (video_xwin.cpp) instead of a dedicated tick
- *  thread; same accumulator pacing as tick_func, so the guest VBL
- *  cadence is unchanged while macemu runs with one thread less.
+ *  60Hz tick thread for the EwokOS xwin backend (upstream Basilisk II
+ *  runs exactly this as its tick_func thread).  An earlier revision
+ *  folded it into the x thread's on_loop callback (TickHeartbeat) to
+ *  save one thread, but x_run only invokes on_loop when the x event
+ *  queue is EMPTY: a continuous input stream (touch drag) starved the
+ *  heartbeat, stopping the guest VBL -- and with it the guest cursor
+ *  task, the ADB button-edge settle gate and the 1Hz clock -- for the
+ *  whole duration of the stream.  The heartbeat runs on its own thread
+ *  again so guest timing is independent of x event traffic.
  */
-void TickHeartbeat(void)
+static void *ewok_tick_func(void *arg)
 {
-	static uint64 next = 0;
-	uint64 now = GetTicks_usec();
-	if (next == 0)
-		next = now;
-	if ((int64)(now - next) < 0)
-		return;
-	one_tick();
-	next += 16625;
-	if ((int64)(now - next) >= 16625)	// Fell a whole tick behind: resync
-		next = now;
+	(void)arg;
+	uint64 next = GetTicks_usec();
+	while (!ewok_tick_cancel) {
+		one_tick();
+		next += 16625;
+		int64 delay = next - GetTicks_usec();
+		if (delay > 0)
+			Delay_usec(delay);
+		else if (delay < -16625)	// Fell a whole tick behind: resync
+			next = GetTicks_usec();
+	}
+	return NULL;
 }
 #endif
 

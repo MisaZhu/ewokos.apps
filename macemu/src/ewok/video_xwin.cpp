@@ -39,10 +39,6 @@ void rgb24be_2_argb(uint32_t *out, const uint8_t *in, int bpr, int w, int h);
 // From newcpu.cpp: set to stop the 68k interpreter loop
 extern bool quit_program;
 
-// From main_unix.cpp: 60Hz heartbeat (60Hz/1Hz interrupts plus the
-// XPRAM watchdog), driven from xwin_loop so no tick thread is needed
-extern void TickHeartbeat(void);
-
 // Extra key codes not in ewoksys/keydef.h (same values minivmac uses)
 #ifndef KEY_INSERT
 #define KEY_INSERT      0xF3
@@ -479,6 +475,8 @@ static bool scan_convert_rows(void)
  *  xwin callbacks
  */
 
+static void xwin_service(void);
+
 static void on_xwin_resize(xwin_t *win)
 {
 	(void)win;
@@ -498,6 +496,10 @@ static void on_xwin_event(xwin_t *win, xevent_t *ev)
 			else
 				ADBKeyUp(code);
 		}
+		// Service scan+present from the event path too: x_run only
+		// calls xwin_loop when the event queue is EMPTY, so a
+		// continuous input stream would starve the screen updates
+		xwin_service();
 		break;
 	}
 	case XEVT_MOUSE: {
@@ -533,6 +535,11 @@ static void on_xwin_event(xwin_t *win, xevent_t *ev)
 		} else if (ev->state == MOUSE_STATE_UP) {
 			ADBMouseUp(0);
 		}
+		// Service scan+present from the event path too: x_run only
+		// calls xwin_loop when the event queue is EMPTY, so a
+		// continuous input stream (touch drag) would starve the
+		// screen updates for the whole duration of the stream
+		xwin_service();
 		break;
 	}
 	case XEVT_WIN:
@@ -642,19 +649,19 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 	}
 }
 
-static void xwin_loop(void *p)
+/*
+ *  Paced frame service: apply a pending mode-switch resize, flush the
+ *  coalesced mouse position, scan for freshly drawn guest rows and
+ *  present.  Runs from xwin_loop at the idle cadence AND from
+ *  on_xwin_event while input flows: x_run only calls the on_loop
+ *  callback when the x event queue is EMPTY, so under a continuous
+ *  input stream (touch drag) xwin_loop never runs and without this the
+ *  screen would not update for the whole duration of the stream.
+ *  Every step here is internally paced (MOVE_FLUSH/SCAN/PRESENT
+ *  intervals), so the extra calls cost almost nothing.
+ */
+static void xwin_service(void)
 {
-	(void)p;
-
-	if (emerg_quit) {
-		x_terminate(x_context);
-		return;
-	}
-
-	// Drive the 60Hz guest heartbeat from this loop; this loop runs at
-	// VBL-or-faster cadence, so no dedicated tick thread is needed
-	TickHeartbeat();
-
 	uint64_t tik = kernel_tic_ms(0);
 
 	// Apply a pending mode-switch resize (deferred here so it runs on
@@ -714,6 +721,23 @@ static void xwin_loop(void *p)
 		xwin_repaint(xwin);
 		last_present_ms = kernel_tic_ms(0);
 	}
+}
+
+static void xwin_loop(void *p)
+{
+	(void)p;
+
+	if (emerg_quit) {
+		x_terminate(x_context);
+		return;
+	}
+
+	// The 60Hz guest heartbeat runs on its own tick thread
+	// (main_unix.cpp): it must not depend on this callback, which
+	// x_run skips whenever the x event queue is non-empty
+
+	uint64_t tik = kernel_tic_ms(0);
+	xwin_service();
 
 	uint64_t now = kernel_tic_ms(0);
 	uint32_t gap = (uint32_t)(now - tik);
