@@ -6,6 +6,8 @@
  *    - Guest IP 10.0.0.2  (virtual, static)
  *    - Gateway IP 10.0.0.1 (virtual, MAC = ether_addr)
  *    - ARP: answered locally for gateway / guest
+ *    - DHCP: built-in server answers the guest's DISCOVER/REQUEST with
+ *            the fixed NAT topology, so the guest needs no manual IP
  *    - UDP: relayed via EwokOS SOCK_DGRAM sockets
  *    - ICMP: relayed via EwokOS SOCK_RAW sockets
  *    - TCP: deferred to Phase 2 (SYN gets RST)
@@ -51,6 +53,15 @@ extern "C" {
 /* Guest MAC = ether_addr[] (set by ether_init(), used by upper layer) */
 static const uint32_t GUEST_IP   = 0x0A000002;  /* 10.0.0.2          */
 static const uint32_t GW_IP      = 0x0A000001;  /* 10.0.0.1 (v-gw)   */
+static const uint32_t NET_MASK   = 0xFFFFFF00;  /* 255.255.255.0     */
+
+/* DNS servers handed to the guest via DHCP. The UDP relay forwards the
+ * guest's queries to these IPs, so any reachable public resolver works.
+ * Same pair the host's gethostbyname() falls back to.                 */
+static const uint32_t DNS_SERVERS[2] = {
+	0xDE050505,  /* 223.5.5.5 */
+	0x08080808   /* 8.8.8.8   */
+};
 
 /* ------------------------------------------------------------------ */
 /*  Ethernet / IP constants                                           */
@@ -75,6 +86,19 @@ static const uint8_t gateway_mac[ETH_ALEN] = {
 
 #define ICMP_ECHO_REPLY 0
 #define ICMP_ECHO_REQ   8
+
+/* DHCP / BOOTP */
+#define DHCP_SERVER_PORT 67
+#define DHCP_CLIENT_PORT 68
+#define BOOTP_REQUEST    1
+#define BOOTP_REPLY      2
+#define DHCP_DISCOVER    1
+#define DHCP_OFFER       2
+#define DHCP_REQUEST     3
+#define DHCP_ACK         5
+#define DHCP_INFORM      8
+#define DHCP_LEASE_SEC   86400
+#define DHCP_MAGIC       0x63825363
 
 /* TCP flags / proxy tuning */
 #define TCP_MSS          1460
@@ -621,6 +645,115 @@ static udp_session *create_udp_session_locked(uint16_t guest_port,
 	return s;
 }
 
+/* ------------------------------------------------------------------ */
+/*  DHCP server - guest auto-config                                   */
+/* ------------------------------------------------------------------ */
+
+/* Minimal stateless DHCP server for the guest: a guest OS configured
+ * via DHCP gets the fixed NAT topology (IP / netmask / router / DNS)
+ * from here instead of needing manual TCP/IP settings -- the same idea
+ * as qemu's slirp. There is only one guest, so a single virtual lease
+ * exists and every REQUEST is ACKed without lease bookkeeping.
+ * bootp points at the UDP payload, plen at its length.               */
+static void handle_dhcp(const uint8_t *bootp, int plen)
+{
+	if (plen < 240 || bootp[0] != BOOTP_REQUEST ||
+	    rd32(bootp + 236) != DHCP_MAGIC)
+		return;
+
+	uint32_t xid = rd32(bootp + 4);
+	const uint8_t *chaddr = bootp + 28;
+
+	/* Walk the TLV options looking for the message type (53) */
+	uint8_t msg_type = 0;
+	int oi = 240;
+	while (oi + 2 <= plen) {
+		uint8_t code = bootp[oi];
+		if (code == 255)
+			break;
+		if (code == 0) {   /* pad option */
+			oi++;
+			continue;
+		}
+		int olen = bootp[oi + 1];
+		if (oi + 2 + olen > plen)
+			break;
+		if (code == 53 && olen >= 1)
+			msg_type = bootp[oi + 2];
+		oi += 2 + olen;
+	}
+
+	uint8_t reply_type;
+	switch (msg_type) {
+	case DHCP_DISCOVER:
+		reply_type = DHCP_OFFER;
+		break;
+	case DHCP_REQUEST:
+	case DHCP_INFORM:
+		reply_type = DHCP_ACK;
+		break;
+	default:
+		return;   /* RELEASE / DECLINE: nothing to do */
+	}
+	bool inform = (msg_type == DHCP_INFORM);
+
+	/* BOOTREPLY carrying the virtual lease */
+	uint8_t rp[300];
+	memset(rp, 0, sizeof(rp));
+	rp[0] = BOOTP_REPLY;
+	rp[1] = 1;           /* htype: Ethernet */
+	rp[2] = ETH_ALEN;    /* hlen            */
+	wr32(rp + 4, xid);
+	if (!inform)
+		wr32(rp + 16, GUEST_IP);        /* yiaddr */
+	wr32(rp + 20, GW_IP);                   /* siaddr = DHCP server */
+	memcpy(rp + 28, chaddr, 16);
+	wr32(rp + 236, DHCP_MAGIC);
+
+	int o = 240;
+	rp[o++] = 53; rp[o++] = 1; rp[o++] = reply_type;          /* msg type  */
+	rp[o++] = 54; rp[o++] = 4; wr32(rp + o, GW_IP); o += 4;   /* server id */
+	if (!inform) {
+		rp[o++] = 51; rp[o++] = 4;                        /* lease     */
+		wr32(rp + o, DHCP_LEASE_SEC); o += 4;
+	}
+	rp[o++] = 1;  rp[o++] = 4; wr32(rp + o, NET_MASK); o += 4;
+	rp[o++] = 3;  rp[o++] = 4; wr32(rp + o, GW_IP); o += 4;   /* router    */
+	rp[o++] = 6;  rp[o++] = 8;                                /* DNS       */
+	wr32(rp + o, DNS_SERVERS[0]); o += 4;
+	wr32(rp + o, DNS_SERVERS[1]); o += 4;
+	rp[o++] = 255;
+
+	/* UDP server(67) -> client(68) to the IP broadcast address: the
+	 * client has no address of its own yet, so neither the IP nor the
+	 * Ethernet destination can be unicast.                          */
+	int udp_len = 8 + o;
+	int ip_total = 20 + udp_len;
+	uint8_t ip_pkt[340];
+	memset(ip_pkt, 0, 20);
+	ip_pkt[0] = 0x45;
+	ip_pkt[2] = (uint8_t)(ip_total >> 8);
+	ip_pkt[3] = (uint8_t)(ip_total);
+	ip_pkt[8] = 64;
+	ip_pkt[9] = IP_PROTO_UDP;
+	wr32(ip_pkt + 12, GW_IP);
+	wr32(ip_pkt + 16, 0xFFFFFFFF);
+	wr16(ip_pkt + 10, ip_checksum(ip_pkt, 20));
+	uint8_t *udp = ip_pkt + 20;
+	wr16(udp + 0, DHCP_SERVER_PORT);
+	wr16(udp + 2, DHCP_CLIENT_PORT);
+	wr16(udp + 4, (uint16_t)udp_len);
+	wr16(udp + 6, 0);
+	memcpy(udp + 8, rp, o);
+	wr16(udp + 6, udp_checksum(ip_pkt, ip_total));
+
+	static const uint8_t bcast_mac[ETH_ALEN] =
+		{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+	uint8_t eth[1514];
+	build_eth_frame(eth, bcast_mac, gateway_mac, ETH_P_IP, ip_pkt, ip_total);
+	enqueue_rx(eth, ETH_HLEN + ip_total);
+}
+
 static void forward_udp(const uint8_t *ip_pkt, int ip_len)
 {
 	if (ip_len < 20)
@@ -639,6 +772,15 @@ static void forward_udp(const uint8_t *ip_pkt, int ip_len)
 	if (payload_len < 0 || ihl + udp_len > ip_len)
 		return;
 	const uint8_t *payload = udp + 8;
+
+	/* Guest DHCP client traffic (dst port 67) is answered by our virtual
+	 * NAT server above -- relaying the broadcast onto the real network
+	 * would leak the private 10.0.0.x address space and get no useful
+	 * reply anyway.                                                     */
+	if (dst_port == DHCP_SERVER_PORT) {
+		handle_dhcp(payload, payload_len);
+		return;
+	}
 
 	/* Find or create a UDP session, and send, all under udp_mutex so
 	 * the idle reaper can never free a session while it is in use.   */
