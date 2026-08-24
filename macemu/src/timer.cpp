@@ -53,6 +53,7 @@ enum {	// TMTask struct
 struct TMDesc {
 	uint32 task;		// Mac address of associated TMTask
 	tm_time_t wakeup;	// Time this task is scheduled for execution
+	int refs;		// Install nesting level (InsTime increments, RmvTime decrements)
 	bool in_use;		// Flag: descriptor in use
 };
 
@@ -70,6 +71,7 @@ static int alloc_desc(uint32 tm)
 	for (int i=0; i<NUM_DESCS; i++)
 		if (!desc[i].in_use) {
 			desc[i].task = tm;
+			desc[i].refs = 1;
 			desc[i].in_use = true;
 			return i;
 		}
@@ -174,10 +176,15 @@ int16 InsTime(uint32 tm, uint16 trap)
 {
 	D(bug("InsTime %08lx, trap %04x\n", tm, trap));
 	WriteMacInt16(tm + qType, ReadMacInt16(tm + qType) & 0x1fff | (trap << 4) & 0x6000);
-	if (find_desc(tm) >= 0)
-		printf("WARNING: InsTime(): Task re-inserted\n");
-	else {
-		int i = alloc_desc(tm);
+	int i = find_desc(tm);
+	if (i >= 0) {
+		// Task re-inserted: the real Time Manager tolerates this, and
+		// guests pair every InsTime with its own RmvTime, so track the
+		// nesting level instead of dropping the second install
+		D(bug("WARNING: InsTime(): Task re-inserted\n"));
+		desc[i].refs++;
+	} else {
+		i = alloc_desc(tm);
 		if (i < 0)
 			printf("FATAL: InsTime(): No free Time Manager descriptor\n");
 	}
@@ -196,7 +203,15 @@ int16 RmvTime(uint32 tm)
 	// Find descriptor
 	int i = find_desc(tm);
 	if (i < 0) {
-		printf("WARNING: RmvTime(%08x): Descriptor not found\n", tm);
+		// Not installed here (defensive RmvTime, or installed before the
+		// last reset). The real Time Manager tolerates this; normalize
+		// the guest's view so no stale "active" task lingers.
+		D(bug("WARNING: RmvTime(%08x): Descriptor not found\n", tm));
+		if (ReadMacInt16(tm + qType) & 0x8000) {
+			WriteMacInt16(tm + qType, ReadMacInt16(tm + qType) & 0x7fff);
+			dequeue_tm(tm);
+		}
+		WriteMacInt32(tm + tmCount, 0);
 		return 0;
 	}
 
@@ -216,8 +231,10 @@ int16 RmvTime(uint32 tm)
 		WriteMacInt32(tm + tmCount, 0);
 	D(bug(" tmCount %d\n", ReadMacInt32(tm + tmCount)));
 
-	// Free descriptor
-	free_desc(i);
+	// Release one install level; free the descriptor only when the task
+	// is fully uninstalled
+	if (--desc[i].refs <= 0)
+		free_desc(i);
 	return 0;
 }
 

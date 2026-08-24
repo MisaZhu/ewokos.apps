@@ -1179,7 +1179,10 @@ int xwin_key2adb(int key)
 	case KEY_TAB: return 0x30;
 	case KEY_SPACE: return 0x31;
 	case '`': return 0x32;
-	case KEY_BACKSPACE: return 0x33;
+	// Physical USB keyboards deliver backspace as '\b' (CONSOLE_LEFT)
+	// through hid_keybd's downMap; only the on-screen vkey sends
+	// KEY_BACKSPACE.  Accept both like the rest of the system does.
+	case KEY_BACKSPACE: case CONSOLE_LEFT: return 0x33;
 	case KEY_ENTER: return 0x24;
 	case KEY_ESC: return 0x35;
 	case KEY_SHIFT: case KEY_RSHIFT: return 0x38;

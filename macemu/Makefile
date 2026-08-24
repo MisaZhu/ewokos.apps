@@ -36,14 +36,15 @@ UNIX_SRCS = main_unix sys_unix timer_unix prefs_unix xpram_unix \
 	extfs_unix posix_sem user_strings_unix
 UNIX_OBJS = $(patsubst %,$(ARCH)/unix/%.o,$(UNIX_SRCS))
 
-DUMMY_SRCS = clip_dummy serial_dummy ether_dummy scsi_dummy prefs_editor_dummy
+DUMMY_SRCS = clip_dummy serial_dummy scsi_dummy prefs_editor_dummy
 DUMMY_OBJS = $(patsubst %,$(ARCH)/dummy/%.o,$(DUMMY_SRCS))
 
 XPLAT_OBJS = $(ARCH)/xplat/video_blit.o
 
 EWOK_OBJS = $(ARCH)/ewok/vm_alloc_ewok.o $(ARCH)/ewok/sigsegv_ewok.o \
 	$(ARCH)/ewok/rpc_stub.o $(ARCH)/ewok/ewok_compat.o \
-	$(ARCH)/ewok/video_xwin.o $(ARCH)/ewok/audio_pcm.o
+	$(ARCH)/ewok/video_xwin.o $(ARCH)/ewok/audio_pcm.o \
+	$(ARCH)/ewok/ether_ewok.o
 
 UAE_SRCS = basilisk_glue memory newcpu readcpu
 UAE_OBJS = $(patsubst %,$(ARCH)/uae/%.o,$(UAE_SRCS)) \

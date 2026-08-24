@@ -1247,8 +1247,9 @@ static void one_tick(...)
 	VideoRefresh();
 #endif
 
-#ifndef HAVE_PTHREADS
-	// No threads available, perform networking from here
+#if !defined(HAVE_PTHREADS) || defined(USE_EWOK_XWIN)
+	// No threads available, or EwokOS SLIRP backend: deliver ethernet
+	// frames via EtherInterrupt() on the 60Hz tick.
 	SetInterruptFlag(INTFLAG_ETHER);
 #endif
 
