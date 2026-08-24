@@ -297,6 +297,55 @@ static void draw_floppy(graph_t *g, int x, int y, int s)
 	graph_fill_rect(g, lx + lw/8, ly + lh*2/3, lw*3/4, lh1, SPLASH_SHUTTER);
 }
 
+static void draw_zip_glyph(graph_t *g, int x, int y, int u,
+	const uint8_t rows[5], uint32_t color)
+{
+	for (int r = 0; r < 5; r++) {
+		for (int c = 0; c < 3; c++) {
+			if (rows[r] & (4 >> c))
+				graph_fill_rect(g, x + c*u, y + r*u, u, u, color);
+		}
+	}
+}
+
+static void draw_zip(graph_t *g, int x, int y, int s)
+{
+	// Page body with a folded top-right corner (1px rows: the graph lib
+	// has no polygon fill). The dark flap grows while the bg cut shrinks
+	// toward the corner, forming the dog-ear diagonal.
+	graph_fill_round(g, x, y, s, s, s/10, SPLASH_FG);
+	int f = s/3;
+	for (int j = 0; j < f; j++) {
+		graph_fill_rect(g, x + s - f, y + j, j, 1, SPLASH_SHUTTER);
+		graph_fill_rect(g, x + s - f + j, y + j, f - j, 1, SPLASH_BG);
+	}
+
+	// "ZIP" label, 3x5 block glyphs
+	static const uint8_t GL_Z[5] = {7, 1, 2, 4, 7};
+	static const uint8_t GL_I[5] = {7, 2, 2, 2, 7};
+	static const uint8_t GL_P[5] = {6, 5, 5, 6, 4};
+	int u = (s/24 > 1) ? s/24 : 1;
+	int tx = x + s/8, ty = y + s/8;
+	draw_zip_glyph(g, tx, ty, u, GL_Z, SPLASH_SHUTTER);
+	draw_zip_glyph(g, tx + 4*u, ty, u, GL_I, SPLASH_SHUTTER);
+	draw_zip_glyph(g, tx + 8*u, ty, u, GL_P, SPLASH_SHUTTER);
+
+	// Zipper: slider with punched hole, then tooth bars down the middle
+	int cx = x + s/2;
+	int sw = s/5, sh = s/5;
+	int sy = y + s*2/5;
+	graph_fill_round(g, cx - sw/2, sy, sw, sh, sw/3, SPLASH_SHUTTER);
+	graph_fill_circle(g, cx, sy + sw/2, sw/4, SPLASH_FG);
+	int bw = s/4, bh = s/16;
+	if (bh < 2)
+		bh = 2;
+	int by = sy + sh + s/20;
+	for (int i = 0; i < 3; i++) {
+		graph_fill_round(g, cx - bw/2, by, bw, bh, bh/2, SPLASH_SHUTTER);
+		by += bh + s/20;
+	}
+}
+
 static void draw_copy_arrow(graph_t *g, int x, int cy, int s)
 {
 	int shaft_h = (s/8 > 2) ? s/8 : 2;
@@ -359,8 +408,8 @@ static void draw_copy_splash(graph_t *g)
 	int y0 = (gh - block_h)/2;
 	int cy = y0 + s/2;
 
-	// Shipped image (floppy) copied onto the user's writable disk (hdd)
-	draw_floppy(g, x0, y0, s);
+	// Shipped archive (.dsk.zip) unpacked onto the user's writable disk (hdd)
+	draw_zip(g, x0, y0, s);
 	draw_copy_arrow(g, x0 + s + gap, cy, s);
 	draw_hdd(g, x0 + s + gap + arrow_len + gap, y0, s);
 
