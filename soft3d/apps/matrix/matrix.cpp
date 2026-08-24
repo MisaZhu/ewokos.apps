@@ -422,7 +422,7 @@ struct Column {
     }
 
     void reset() {
-        y = (float)(rand() % HEIGHT) - HEIGHT;
+        y = (float)(rand() % height) - height;
         speed = 2.0f + (float)(rand() % 100) / 50.0f;
         length = 10 + rand() % 40;
         if (length > MAX_COLUMN_LENGTH) length = MAX_COLUMN_LENGTH;
@@ -435,7 +435,7 @@ struct Column {
 
     void update(float dt) {
         y += speed * dt * 60.0f;
-        if (y - length * FONT_SIZE > HEIGHT) {
+        if (y - length * FONT_SIZE > height) {
             reset();
         }
         if (rand() % 3 == 0) {
@@ -585,21 +585,18 @@ int main(int argc, char** argv) {
     columns.resize(num_columns);
 
     for (size_t i = 0; i < columns.size(); i++) {
-        columns[i].y = (float)(rand() % (HEIGHT + HEIGHT)) - HEIGHT;
+        columns[i].y = (float)(rand() % (height + height)) - height;
     }
 
     unsigned int last_time = SDL_GetTicks();
     int frame_count = 0;
     unsigned int fps_time = 0;
-    float accumulator = 0.0f;
-    const float FIXED_DT = 1.0f / 60.0f;  // Fixed 60 FPS timestep
 
     while (1) {
         unsigned int current_time = SDL_GetTicks();
         float dt = (current_time - last_time) / 1000.0f;
         if (dt > 0.1f) dt = 0.1f;  // Clamp large frame gaps to avoid visible jumps after stalls
         last_time = current_time;
-        accumulator += dt;
 
         if (handle_events()) {
             break;
@@ -616,12 +613,10 @@ int main(int argc, char** argv) {
             bbufpix[i] = 0xFF000000;
         }
 
-        // Update with a fixed timestep to keep the animation speed consistent.
-        while (accumulator >= FIXED_DT) {
-            for (size_t ci = 0; ci < columns.size(); ci++) {
-                columns[ci].update(FIXED_DT);
-            }
-            accumulator -= FIXED_DT;
+        // Update once per rendered frame with the real frame time so the
+        // animation stays in step with what is actually displayed.
+        for (size_t ci = 0; ci < columns.size(); ci++) {
+            columns[ci].update(dt);
         }
 
         if (is_font_loaded) {
