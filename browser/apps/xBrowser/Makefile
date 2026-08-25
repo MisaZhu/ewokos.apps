@@ -3,7 +3,7 @@ include $(PROJS_ROOT_DIR)/make.inc
 
 .DEFAULT_GOAL := all
 
-BUILD_DIR = $(EWOKOS_SYS_DIR)/build/$(HW)
+BUILD_DIR = $(EWOKOS_SYS_DIR)/build_$(ARCH)/$(HW)
 TARGET_DIR = $(BUILD_DIR)/rootfs
 
 LDFLAGS = -L $(TARGET_DIR)/lib -L $(BUILD_DIR)/lib

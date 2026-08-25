@@ -1,7 +1,7 @@
 PROJS_ROOT_DIR=../../..
 include $(PROJS_ROOT_DIR)/make.inc
 
-BUILD_DIR = $(EWOKOS_SYS_DIR)/build/$(HW)
+BUILD_DIR = $(EWOKOS_SYS_DIR)/build_$(ARCH)/$(HW)
 
 CFLAGS += -I. -Iinclude -Iinclude/glcommon -I $(BUILD_DIR)/include -I../external -I../portablegl/include -I../portablegl/include/portablegl
 CXXFLAGS += -I. -Iinclude -Iinclude/glcommon -I $(BUILD_DIR)/include -I../external -I../portablegl/include -I../portablegl/include/portablegl

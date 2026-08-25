@@ -1,7 +1,7 @@
 PROJS_ROOT_DIR = ../../..
 include $(PROJS_ROOT_DIR)/make.inc
 
-BUILD_DIR = $(EWOKOS_SYS_DIR)/build/$(HW)
+BUILD_DIR = $(EWOKOS_SYS_DIR)/build_$(ARCH)/$(HW)
 TARGET_DIR = $(BUILD_DIR)/rootfs
 
 LDFLAGS = -L $(BUILD_DIR)/lib

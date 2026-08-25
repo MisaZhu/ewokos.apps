@@ -5,7 +5,7 @@ include $(FFMPEG_ROOT_DIR)/../../../make.inc
 
 TASK = mp4player
 TASK_OBJS = $(ARCH)/mp4player.o
-BUILD_DIR = $(SYS_ROOT_DIR)/build/$(HW)/rootfs/bin/x
+BUILD_DIR = $(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/rootfs/bin/x
 LIBGCC = $(shell $(CC) -print-libgcc-file-name)
 
 FFMPEG_LIBS = -lavformat -lavcodec -lswscale -lswresample
@@ -18,20 +18,20 @@ LDFLAGS += \
 all: $(TASK)
 
 $(TASK): $(TASK_OBJS) \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libavformat.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libavcodec.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libswscale.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libswresample.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libavutil.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libewoksys.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libewokstl.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libx++.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libx.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libfont.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libgraph.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libwidget++.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libSDL2.a \
-	$(SYS_ROOT_DIR)/build/$(HW)/lib/libcxx.a
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libavformat.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libavcodec.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libswscale.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libswresample.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libavutil.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libewoksys.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libewokstl.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libx++.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libx.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libfont.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libgraph.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libwidget++.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libSDL2.a \
+	$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libcxx.a
 	mkdir -p $(BUILD_DIR)
 	$(LD) -Ttext=100 $(TASK_OBJS) -o $(BUILD_DIR)/$(TASK) $(LDFLAGS) $(EWOK_LIB_X) $(EWOK_LIB_GRAPH) $(EWOK_LIBC) $(LIBGCC) -lcxx
 clean:

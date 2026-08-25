@@ -8,7 +8,7 @@ TASK_OBJS = $(ARCH)/main.o \
 		$(ARCH)/src/K6502.o
 
 TASK = nesemu
-BUILD_DIR = $(EWOKOS_ROOT_DIR)/system/build/$(HW)/rootfs/apps/$(TASK)
+BUILD_DIR = $(EWOKOS_ROOT_DIR)/system/build_$(ARCH)/$(HW)/rootfs/apps/$(TASK)
 
 all: $(TASK)
 

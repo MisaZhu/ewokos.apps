@@ -1,7 +1,7 @@
 SW_ROOT_DIR=../../..
 include $(SW_ROOT_DIR)/make.inc
 
-BUILD_DIR = $(SYS_ROOT_DIR)/build/$(HW)
+BUILD_DIR = $(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)
 ROOTFS_BIN = $(BUILD_DIR)/rootfs/bin/x
 
 CFLAGS += -I.. -I../external -I $(BUILD_DIR)/include/SDL2 -D__ewokos__
@@ -62,14 +62,14 @@ $(ARCH)/%.o: %.cpp
 
 # Link C programs
 $(ROOTFS_BIN)/%: $(ARCH)/%.o $(LD_LIB_DEPS) \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libewoksys.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libewokstl.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libx++.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libx.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libfont.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libgraph.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libwidget++.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libcxx.a
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libewoksys.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libewokstl.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libx++.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libx.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libfont.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libgraph.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libwidget++.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libcxx.a
 	$(LD) -Ttext=100 $< $(GLCOMMON_LIB) -o $@ $(LDFLAGS)
 
 clean:

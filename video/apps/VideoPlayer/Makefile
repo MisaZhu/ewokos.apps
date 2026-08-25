@@ -5,8 +5,8 @@ SYS_ROOT_DIR = $(patsubst ~%,$(HOME)%,$(EWOKOS_SYS_DIR))
 
 TASK = VideoPlayer
 TASK_OBJS = $(ARCH)/VideoPlayer.o
-BUILD_DIR = $(SYS_ROOT_DIR)/build/$(HW)/rootfs/apps/$(TASK)
-EXTRA_LIBS_DIR = $(SYS_ROOT_DIR)/build/$(HW)
+BUILD_DIR = $(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/rootfs/apps/$(TASK)
+EXTRA_LIBS_DIR = $(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)
 LIBGCC = $(shell $(CC) -print-libgcc-file-name)
 
 CXXFLAGS += -I $(EXTRA_LIBS_DIR)/include
@@ -27,14 +27,14 @@ $(TASK): $(TASK_OBJS) \
 		$(EXTRA_LIBS_DIR)/lib/libswscale.a \
 		$(EXTRA_LIBS_DIR)/lib/libswresample.a \
 		$(EXTRA_LIBS_DIR)/lib/libavutil.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libewoksys.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libewokstl.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libx++.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libx.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libfont.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libewoksys.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libewokstl.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libx++.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libx.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libfont.a \
 		$(EXTRA_LIBS_DIR)/lib/libgraph.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libwidget++.a \
-		$(SYS_ROOT_DIR)/build/$(HW)/lib/libcxx.a
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libwidget++.a \
+		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libcxx.a
 	mkdir -p $(BUILD_DIR)
 	$(LD) -Ttext=100 $(TASK_OBJS) -o $(BUILD_DIR)/$(TASK) $(LDFLAGS) $(VIDEO_LIBS) $(EWOK_LIB_X) $(EWOK_LIB_GRAPH) $(EWOK_LIBC) $(LIBGCC) -lcxx
 	cp -r res $(BUILD_DIR)

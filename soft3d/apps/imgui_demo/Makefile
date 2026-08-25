@@ -3,7 +3,7 @@ include $(PROJS_ROOT_DIR)/make.inc
 
 TASK_OBJS = $(ARCH)/imgui_demo.o $(ARCH)/imgui_main.o
 
-EXTRA_LIBS_DIR = $(EWOKOS_SYS_DIR)/build/$(HW)
+EXTRA_LIBS_DIR = $(EWOKOS_SYS_DIR)/build_$(ARCH)/$(HW)
 
 CFLAGS += -I.. -I $(EXTRA_LIBS_DIR)/include/glcommon -I $(EXTRA_LIBS_DIR)/include/imgui -D__ewokos__
 CXXFLAGS += -I.. -I $(EXTRA_LIBS_DIR)/include/glcommon -I $(EXTRA_LIBS_DIR)/include/imgui -D__ewokos__ -fno-threadsafe-statics
@@ -14,7 +14,7 @@ IMGUI_LIBS = $(EXTRA_LIBS_DIR)/lib/libglcommon.a \
 	$(EXTRA_LIBS_DIR)/lib/libportablegl.a
 
 TASK = imgui_demo
-TASK_DIR = $(EWOKOS_SYS_DIR)/build/$(HW)/rootfs/apps/$(TASK)
+TASK_DIR = $(EWOKOS_SYS_DIR)/build_$(ARCH)/$(HW)/rootfs/apps/$(TASK)
 
 all: $(TASK)
 

@@ -3,7 +3,7 @@ include $(PROJS_ROOT_DIR)/make.inc
 
 TASK_OBJS = $(ARCH)/matrix.o
 
-EXTRA_LIBS_DIR = $(EWOKOS_SYS_DIR)/build/$(HW)
+EXTRA_LIBS_DIR = $(EWOKOS_SYS_DIR)/build_$(ARCH)/$(HW)
 
 CXXFLAGS += -I $(EXTRA_LIBS_DIR)/include -I $(EXTRA_LIBS_DIR)/include/glcommon
 LDFLAGS += -L $(EXTRA_LIBS_DIR)/lib -lSDL2_image -lSDL2_mixer -lSDL2_gfx -lSDL2_ttf -lSDL2
@@ -12,7 +12,7 @@ GLCOMMON_LIB = $(EXTRA_LIBS_DIR)/lib/libglcommon.a \
 	$(EXTRA_LIBS_DIR)/lib/libportablegl.a
 
 TASK = matrix
-TASK_DIR = $(EWOKOS_SYS_DIR)/build/$(HW)/rootfs/apps/$(TASK)
+TASK_DIR = $(EWOKOS_SYS_DIR)/build_$(ARCH)/$(HW)/rootfs/apps/$(TASK)
 
 all: $(TASK)
 

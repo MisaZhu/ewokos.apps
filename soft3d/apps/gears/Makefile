@@ -3,7 +3,7 @@ include $(PROJS_ROOT_DIR)/make.inc
 
 TASK_OBJS = $(ARCH)/gears.o
 
-EXTRA_LIBS_DIR = $(EWOKOS_SYS_DIR)/build/$(HW)
+EXTRA_LIBS_DIR = $(EWOKOS_SYS_DIR)/build_$(ARCH)/$(HW)
 
 CFLAGS += -I $(EXTRA_LIBS_DIR)/include -I $(EXTRA_LIBS_DIR)/include/glcommon
 LDFLAGS += -L $(EXTRA_LIBS_DIR)/lib
@@ -12,7 +12,7 @@ GLCOMMON_LIB = $(EXTRA_LIBS_DIR)/lib/libglcommon.a \
 	$(EXTRA_LIBS_DIR)/lib/libportablegl.a
 
 TASK = gears
-TASK_DIR = $(EWOKOS_SYS_DIR)/build/$(HW)/rootfs/apps/$(TASK)
+TASK_DIR = $(EWOKOS_SYS_DIR)/build_$(ARCH)/$(HW)/rootfs/apps/$(TASK)
 
 all: $(TASK)
 

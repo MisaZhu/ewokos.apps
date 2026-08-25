@@ -3,7 +3,7 @@ include $(SW_ROOT_DIR)/../make.inc
 
 SYS_ROOT_DIR = $(patsubst ~%,$(HOME)%,$(EWOKOS_SYS_DIR))
 
-BUILD_DIR = $(SYS_ROOT_DIR)/build/$(HW)
+BUILD_DIR = $(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)
 TARGET_DIR = $(BUILD_DIR)
 FFMPEG_DIR = $(SW_ROOT_DIR)/libs/ffmpeg
 FFMPEG_HEADER = $(TARGET_DIR)/include/libavcodec/avcodec.h

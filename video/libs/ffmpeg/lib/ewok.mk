@@ -3,7 +3,7 @@ include ../../../../make.inc
 SYS_ROOT_DIR = $(patsubst ~%,$(HOME)%,$(EWOKOS_SYS_DIR))
 
 FFMPEG_SRC_DIR = $(CURDIR)
-SYS_BUILD_DIR = $(abspath $(SYS_ROOT_DIR)/build/$(HW))
+SYS_BUILD_DIR = $(abspath $(SYS_ROOT_DIR)/build_$(ARCH)/$(HW))
 SDK_DIR := $(SYS_BUILD_DIR)
 BUILD_DIR := $(SYS_BUILD_DIR)
 FFMPEG_STAGE_DIR = $(FFMPEG_BUILD_DIR)/_install
