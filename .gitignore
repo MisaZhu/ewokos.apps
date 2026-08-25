@@ -6,7 +6,7 @@
 .vscode/dryrun.log
 .vscode/targets.log
 .deps
-build
+build*
 .xmake
 *.a
 apps/macemu/host/build68k
