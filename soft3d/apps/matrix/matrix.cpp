@@ -423,7 +423,7 @@ struct Column {
 
     void reset() {
         y = (float)(rand() % height) - height;
-        speed = 2.0f + (float)(rand() % 100) / 50.0f;
+        speed = 60.0f + (float)(rand() % 241);  // random fall speed, 60~300 pixels per second
         length = 10 + rand() % 40;
         if (length > MAX_COLUMN_LENGTH) length = MAX_COLUMN_LENGTH;
         size_t char_count = strlen(MATRIX_CHARS);
@@ -434,7 +434,7 @@ struct Column {
     }
 
     void update(float dt) {
-        y += speed * dt * 60.0f;
+        y += speed * dt;
         if (y - length * FONT_SIZE > height) {
             reset();
         }
@@ -676,7 +676,7 @@ int main(int argc, char** argv) {
         SDL_RenderFillRect(ren, NULL);
         SDL_RenderCopy(ren, tex, NULL, NULL);
         SDL_RenderPresent(ren);
-        SDL_Delay(16);
+        SDL_Delay(3);
     }
 
     cleanup();
