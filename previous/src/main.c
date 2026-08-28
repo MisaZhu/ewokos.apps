@@ -24,6 +24,7 @@ const char Main_fileid[] = "Hatari main.c : " __DATE__ " " __TIME__;
 #include "m68000.h"
 #include "paths.h"
 #include "reset.h"
+#include "rtcnvram.h"
 #include "screen.h"
 #include "sdlgui.h"
 #include "shortcut.h"
@@ -477,6 +478,7 @@ static void Main_Init(void) {
  * Un-Initialise emulation
  */
 static void Main_UnInit(void) {
+	nvram_save();                 /* EwokOS: persist guest NVRAM (BOM settings) */
 	Screen_ReturnFromFullScreen();
 	IoMem_UnInit();
 	SDLGui_UnInit();

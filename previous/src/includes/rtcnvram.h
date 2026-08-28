@@ -6,4 +6,5 @@ void rtc_stop_pdown_request(void);
 
 void nvram_init(void);
 void nvram_checksum(int force);
+void nvram_save(void);
 char * get_rtc_ram_info(void);

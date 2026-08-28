@@ -16,6 +16,8 @@
 #include "dimension.h"
 #include "sysReg.h"
 #include "rtcnvram.h"
+#include "main.h"
+#include "paths.h"
 
 #include <time.h>
 
@@ -227,6 +229,7 @@ int oldrtc_interface_io(Uint8 rtdatabit) {
                     rtc_put_clock(rtc_addr, rtc_val);
                 } else {
                     rtc.ram[rtc_addr&RTC_ADDR_MASK] = rtc_val;
+                    nvram_save(); /* EwokOS: persist guest NVRAM changes */
                 }
             }
             
@@ -383,6 +386,8 @@ void rtc_put_clock(Uint8 addr, Uint8 val) {
             rtc.intctrl = val;
             if (rtc.intctrl&RTC_POWERDOWN) {
                 Log_Printf(LOG_WARN, "[RTC] Power down!");
+                nvram_save();        /* EwokOS: flush NVRAM, then quit the app */
+                bQuitProgram = true; /* no confirm dialog on guest power-off */
                 M68000_Stop();
             }
             break;
@@ -517,6 +522,7 @@ int newrtc_interface_io(Uint8 rtdatabit) {
                     } else {
                         rtc.ram[rtc_addr&0x1F] = rtc_val;
                     }
+                    nvram_save(); /* EwokOS: persist guest NVRAM changes */
                 }
             }
             
@@ -632,6 +638,8 @@ void newrtc_put_clock(Uint8 addr, Uint8 val) {
             }
             if (newrtc.control&NRTC_POWERDOWN) {
                 Log_Printf(LOG_WARN, "[newRTC] Power down!");
+                nvram_save();        /* EwokOS: flush NVRAM, then quit the app */
+                bQuitProgram = true; /* no confirm dialog on guest power-off */
                 M68000_Stop();
             }
             break;
@@ -750,6 +758,66 @@ void newrtc_stop_pdown_request(void) {
  * ----x--- -------- -------- -------- bit 27:    alt cons
  * xxxx---- -------- -------- -------- bit 28-31: reset
  */
+
+/* ------------------- NVRAM host file persistence ------------------- */
+
+/* EwokOS: keep the guest-writable NVRAM contents in a host file so
+ * boot monitor (BOM) settings survive emulator restarts. The file
+ * lives next to previous.cfg and holds a raw snapshot of rtc.ram
+ * followed by newrtc.ram2 (64 bytes total). On load, only the
+ * guest-owned bytes are overlaid onto the defaults rebuilt from
+ * ConfigureParams, so hardware-config bytes (Ethernet address, SIMM
+ * map, clock-chip and console-slot bits) always follow the current
+ * configuration. Delete the file to revert to previous.cfg defaults. */
+
+#define NVRAM_FILE_NAME     "previous.nvram"
+#define NVRAM_SNAPSHOT_SIZE (32 + 32)
+
+static char sNvramFileName[FILENAME_MAX];
+
+static const char* nvram_filename(void) {
+    if (sNvramFileName[0] == '\0') {
+        snprintf(sNvramFileName, sizeof(sNvramFileName), "%s%c%s",
+                 Paths_GetHatariHome(), PATHSEP, NVRAM_FILE_NAME);
+    }
+    return sNvramFileName;
+}
+
+void nvram_save(void) {
+    Uint8 buf[NVRAM_SNAPSHOT_SIZE];
+    memcpy(buf,      rtc.ram,     32);
+    memcpy(buf + 32, newrtc.ram2, 32);
+
+    FILE *f = fopen(nvram_filename(), "wb");
+    if (!f) {
+        Log_Printf(LOG_WARN, "[NVRAM] cannot write %s\n", nvram_filename());
+        return;
+    }
+    fwrite(buf, 1, sizeof(buf), f);
+    fclose(f);
+}
+
+static void nvram_load(void) {
+    Uint8 buf[NVRAM_SNAPSHOT_SIZE];
+    FILE *f = fopen(nvram_filename(), "rb");
+    if (!f) {
+        return; /* first boot: keep defaults built from ConfigureParams */
+    }
+    size_t n = fread(buf, 1, sizeof(buf), f);
+    fclose(f);
+    if (n != sizeof(buf)) {
+        Log_Printf(LOG_WARN, "[NVRAM] ignoring %s (bad size)\n", nvram_filename());
+        return;
+    }
+    /* Overlay guest-owned bytes only: 0-3 (volume/brightness/flags),
+     * 12-16 (adobe, POT results) and 18-29 (boot command) */
+    memcpy(&rtc.ram[0],  &buf[0],   4);
+    memcpy(&rtc.ram[12], &buf[12],  5);
+    memcpy(&rtc.ram[18], &buf[18], 12);
+    memcpy(newrtc.ram2,  &buf[32], 32);
+    Log_Printf(LOG_WARN, "[NVRAM] loaded settings from %s\n", nvram_filename());
+}
+
 
 /* RTC RAM */
 Uint8 nvram_default[32]={
@@ -881,6 +949,9 @@ void nvram_init(void) {
 			rtc.ram[17] |= (ND_SLOT>>1)<<3;
 		}
     }
+
+    /* EwokOS: overlay settings saved by the guest (boot command, ...) */
+    nvram_load();
 
 	/* Re-calculate checksum */
     nvram_checksum(1);
