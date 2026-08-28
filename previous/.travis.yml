@@ -1,0 +1,59 @@
+# http://previous.alternative-system.com/index.php/build
+
+language: cpp
+compiler: gcc
+sudo: require
+dist: trusty
+
+# Workaround for: https://github.com/travis-ci/travis-ci/issues/8317
+addons:
+  apt:
+    packages:
+#       - libsdl2-dev
+        - libpng-dev
+        - zlib1g-dev
+        - libudev-dev
+        - libts-dev
+        - libgl1-mesa-dev
+        - libglu1-mesa-dev
+        - libasound2-dev
+        - libpulse-dev
+        - libopenal-dev
+        - libaudiofile-dev
+        - libdbus-1-dev
+        - libdirectfb-dev
+
+script:
+  - wget http://www.libsdl.org/release/SDL2-2.0.4.tar.gz # Apparently it does not compile with libSDL-dev from Ubuntu
+  - tar xfv SDL2-2.0.4.tar.gz
+  - cd SDL2-*/
+  - ./configure
+  - make -j$(nproc)
+  - sudo make install
+  - cd ..
+  - cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+  - make -j$(nproc)
+  - make DESTDIR=appdir -j$(nproc) install ; find appdir/
+  - rm appdir/usr/share/applications/hatariui.desktop
+  - cp dist/*.desktop appdir/usr/share/applications/
+  - mkdir -p appdir/usr/share/icons/hicolor/256x256/apps/ ; touch appdir/usr/share/icons/hicolor/256x256/apps/previous.png # FIXME
+  - wget -c -nv "https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage"
+  - chmod a+x linuxdeployqt-continuous-x86_64.AppImage
+  - unset QTDIR; unset QT_PLUGIN_PATH ; unset LD_LIBRARY_PATH
+  - export LD_LIBRARY_PATH=/usr/local/lib # For linuxdeployqt to find libsdl
+  - export VERSION=$(git rev-parse --short HEAD) # linuxdeployqt uses this for naming the file
+  - ./linuxdeployqt-continuous-x86_64.AppImage appdir/usr/share/applications/*.desktop -bundle-non-qt-libs
+  - ./linuxdeployqt-continuous-x86_64.AppImage appdir/usr/share/applications/*.desktop -appimage
+
+after_success:
+  - find appdir -executable -type f -exec ldd {} \; | grep " => /usr" | cut -d " " -f 2-3 | sort | uniq
+  - # curl --upload-file Previous*.AppImage https://transfer.sh/APPNAME-git.$(git rev-parse --short HEAD)-x86_64.AppImage
+  - wget -c https://github.com/probonopd/uploadtool/raw/master/upload.sh
+  - bash upload.sh Previous*.AppImage*
+  
+branches:
+  except:
+    - # Do not build tags that we create when we upload to GitHub Releases
+    - /^(?i:continuous)/
+
+# Raspberry: http://www.nextcomputers.org/forums/viewtopic.php?t=3847

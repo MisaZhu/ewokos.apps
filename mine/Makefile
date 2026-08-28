@@ -1,0 +1,25 @@
+PROJS_ROOT_DIR=..
+include $(PROJS_ROOT_DIR)/make.inc
+
+TASK_OBJS = $(ARCH)/mine.o
+
+TASK = mine
+BUILD_DIR = $(SDK_DIR)/rootfs/apps/$(TASK)
+
+all: $(TASK)
+
+$(TASK): $(TASK_OBJS) \
+		$(SDK_DIR)/lib/libewoksys.a \
+		$(SDK_DIR)/lib/libewokstl.a \
+		$(SDK_DIR)/lib/libx++.a \
+		$(SDK_DIR)/lib/libx.a \
+		$(SDK_DIR)/lib/libfont.a \
+		$(SDK_DIR)/lib/libgraph.a \
+		$(SDK_DIR)/lib/libwidget++.a \
+		$(SDK_DIR)/lib/libcxx.a
+	mkdir -p $(BUILD_DIR)
+	$(LD) -Ttext=100 $(TASK_OBJS) -o $(BUILD_DIR)/$(TASK) $(LDFLAGS) $(EWOK_LIB_X) $(EWOK_LIB_GRAPH) $(EWOK_LIBC) -lcxx
+	if [ -d res ]; then cp -r res $(BUILD_DIR); fi
+
+clean:
+	rm -f $(TASK_OBJS)

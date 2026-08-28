@@ -4,8 +4,7 @@ include $(PROJS_ROOT_DIR)/make.inc
 BUILD_DIR = $(EWOKOS_SYS_DIR)/build_$(ARCH)/$(HW)
 TARGET_DIR = $(BUILD_DIR)/rootfs
 
-LDFLAGS += -L $(BUILD_DIR)/lib \
-	-lSDL2_image -lSDL2_mixer -lSDL2_gfx -lSDL2_ttf -lSDL2 -lfreetype -lpng -lvorbis -logg -lz -lopenlibm
+LDFLAGS += -L $(BUILD_DIR)/lib
 
 CFLAGS += -I $(BUILD_DIR)/include
 CXXFLAGS += -I $(BUILD_DIR)/include
@@ -41,8 +40,6 @@ $(TASK): $(TASK_OBJS) \
 		$(BUILD_DIR)/lib/libfont.a \
 		$(BUILD_DIR)/lib/libgraph.a \
 		$(BUILD_DIR)/lib/libwidget++.a \
-		$(BUILD_DIR)/lib/libvorbis.a \
-		$(BUILD_DIR)/lib/libogg.a \
 		$(BUILD_DIR)/lib/libcxx.a
 	mkdir -p $(TASK_DIR)
 	$(LD) -Ttext=100 $(TASK_OBJS) -o $(TASK_DIR)/$(TASK) $(LDFLAGS) $(EWOK_LIB_X) $(EWOK_LIB_GRAPH) $(EWOK_LIBC) -lcxx
