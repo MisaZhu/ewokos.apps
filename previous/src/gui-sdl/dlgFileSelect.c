@@ -15,6 +15,7 @@ const char DlgFileSelect_fileid[] = "Hatari dlgFileSelect.c : " __DATE__ " " __T
 #include "main.h"
 #include "scandir.h"
 #include "sdlgui.h"
+#include "screen.h"
 #include "file.h"
 #include "paths.h"
 #include "zip.h"
@@ -238,6 +239,8 @@ static void DlgFileSelect_ManageScrollbar(void)
     float scrollMove;
 
     b = SDL_GetMouseState(&x, &y);
+    /* EwokOS: map window coords into the logical (scaled) screen space */
+    Screen_WindowToLogical(x, y, &x, &y);
 
     /* If mouse is down on the scrollbar for the first time */
     if (fsdlg[SGFSDLG_SCROLLBAR].state & SG_MOUSEDOWN) {
@@ -418,6 +421,8 @@ static char* zip_get_path(const char *zipdir, const char *zipfilename, int brows
 	{
 		char *zippath;
 		zippath = malloc(strlen(zipdir) + strlen(zipfilename) + 1);
+		if (zippath == NULL)
+			return NULL;
 		strcpy(zippath, zipdir);
 		strcat(zippath, zipfilename);
 		return zippath;
@@ -481,6 +486,12 @@ char* SDLGui_FileSelect(const char *path_and_name, char **zip_path, bool bAllowN
 
 	/* Allocate memory for the file and path name strings: */
 	pStringMem = malloc(4 * FILENAME_MAX);
+	if (pStringMem == NULL)
+	{
+		/* EwokOS: out of memory; callers handle NULL like a cancel */
+		fprintf(stderr, "SDLGui_FileSelect: out of memory\n");
+		return NULL;
+	}
 	path = pStringMem;
 	fname = pStringMem + FILENAME_MAX;
 	zipdir = pStringMem + 2 * FILENAME_MAX;
@@ -558,6 +569,18 @@ char* SDLGui_FileSelect(const char *path_and_name, char **zip_path, bool bAllowN
 
 			if (entries < 0)
 			{
+				/* EwokOS: the configured directory may not exist (e.g.
+				 * stale config path); fall back to the filesystem root
+				 * instead of refusing to open the dialog */
+				if (strcmp(path, PATHSEP) != 0)
+				{
+					fprintf(stderr, "SDLGui_FileSelect: Path '%s' not found, falling back to %s\n", path, PATHSEP);
+					strcpy(path, PATHSEP);
+					fname[0] = 0;
+					File_ShrinkName(dlgpath, path, DLGPATH_SIZE);
+					File_ShrinkName(dlgfname, fname, DLGFNAME_SIZE);
+					continue;
+				}
 				fprintf(stderr, "SDLGui_FileSelect: Path not found.\n");
 				free(pStringMem);
 				return NULL;

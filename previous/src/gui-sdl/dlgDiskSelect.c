@@ -15,6 +15,7 @@ const char DlgDiskSelect_fileid[] = "Previous dlgDiskSelect.c : " __DATE__ " " _
 #include "main.h"
 #include "scandir.h"
 #include "sdlgui.h"
+#include "screen.h"
 #include "file.h"
 #include "paths.h"
 #include "zip.h"
@@ -239,6 +240,8 @@ static void DlgFileSelect_ManageScrollbar(void)
     float scrollMove;
     
     b = SDL_GetMouseState(&x, &y);
+    /* EwokOS: map window coords into the logical (scaled) screen space */
+    Screen_WindowToLogical(x, y, &x, &y);
     
     /* If mouse is down on the scrollbar for the first time */
     if (fsdlg[SGFSDLG_SCROLLBAR].state & SG_MOUSEDOWN) {
@@ -419,6 +422,8 @@ static char* zip_get_path(const char *zipdir, const char *zipfilename, int brows
     {
         char *zippath;
         zippath = malloc(strlen(zipdir) + strlen(zipfilename) + 1);
+        if (zippath == NULL)
+            return NULL;
         strcpy(zippath, zipdir);
         strcat(zippath, zipfilename);
         return zippath;
@@ -482,6 +487,12 @@ static char* SDLGui_DiskSelectDialog(const char *path_and_name, char **zip_path,
     
     /* Allocate memory for the file and path name strings: */
     pStringMem = malloc(4 * FILENAME_MAX);
+    if (pStringMem == NULL)
+    {
+        /* EwokOS: out of memory; callers handle NULL like a cancel */
+        fprintf(stderr, "SDLGui_DiskSelect: out of memory\n");
+        return NULL;
+    }
     path = pStringMem;
     fname = pStringMem + FILENAME_MAX;
     zipdir = pStringMem + 2 * FILENAME_MAX;

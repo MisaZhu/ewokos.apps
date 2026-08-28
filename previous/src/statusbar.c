@@ -342,7 +342,8 @@ void Statusbar_AddMessage(const char *msg, Uint32 msecs)
 		return;
 	}
 	item = calloc(1, sizeof(msg_item_t));
-	assert(item);
+	if (item == NULL)  /* EwokOS: OOM; skip the message instead of crashing */
+	    return;
 
 	item->next = MessageList;
 	MessageList = item;

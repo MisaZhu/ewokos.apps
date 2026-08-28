@@ -8,9 +8,8 @@
 #include "nd_nbic.h"
 #include "nd_sdl.h"
 
-Uint8  ND_ram[64*1024*1024];
-Uint8  ND_rom[128*1024];
-Uint8  ND_vram[4*1024*1024];
+/* ND_ram/ND_rom/ND_vram live in nd_mem.c and are allocated lazily
+ * when the NeXTdimension board is enabled (see nd_memory_init) */
 
 /* NeXTdimension board and slot memory */
 #define ND_BOARD_SIZE	0x10000000

@@ -11,9 +11,12 @@
 #include <SDL_endian.h>
 #include <SDL_blendmode.h>
 
+/* EwokOS: smooth letterboxed scaling of the logical emulator frame into
+ * the (possibly WM-clamped) window, macemu video_xwin.cpp style */
+#include <graph/graph.h>
+
 const char Screen_fileid[] = "Previous fast_screen.c : " __DATE__ " " __TIME__;
 
-#include "main.h"
 #include "configuration.h"
 #include "log.h"
 #include "m68000.h"
@@ -24,6 +27,7 @@ const char Screen_fileid[] = "Previous fast_screen.c : " __DATE__ " " __TIME__;
 #include "statusbar.h"
 #include "sdlgui.h"
 #include "video.h"
+#include "kms.h"
 
 SDL_Window*   sdlWindow;
 SDL_Surface*  sdlscrn = NULL;   /* The SDL screen surface */
@@ -37,69 +41,56 @@ static const int NeXT_SCRN_WIDTH  = 1120;
 static const int NeXT_SCRN_HEIGHT = 832;
 
 static SDL_Thread*   repaintThread;
-static SDL_Renderer* sdlRenderer;
 static SDL_sem*      initLatch;
 static SDL_atomic_t  blitFB;
 static SDL_atomic_t  blitUI;           /* When value == 1, the repaint thread will blit the sldscrn surface to the screen on the next redraw */
 static bool          doUIblit;
 static SDL_Rect      saveWindowBounds; /* Window bounds before going fullscreen. Used to restore window size & position. */
-static void*         uiBuffer;         /* uiBuffer used for ui texture */
-static void*         uiBufferTmp;      /* Temporary uiBuffer used by repainter */
+static void*         uiBuffer;         /* UI (status bar + dialogs) with mask pixels made transparent */
+static void*         uiBufferTmp;      /* Snapshot of uiBuffer consumed by the repainter */
+static Uint32*       fbBuf;            /* NeXT framebuffer converted to ARGB8888 */
+static Uint32*       compositeBuf;     /* fb + UI merged, input of the letterbox scaler */
 static SDL_SpinLock  uiBufferLock;     /* Lock for concurrent access to UI buffer between m68k thread and repainter */
 static Uint32        mask;             /* green screen mask for transparent UI areas */
 static volatile bool doRepaint  = true; /* Repaint thread runs while true */
 static SDL_Rect      statusBar;
 
+/* EwokOS: letterbox geometry of the logical frame inside the window
+ * (macemu view_scale/view_offset).  Written by the repaint thread in
+ * presentFrame(), read by the event thread's mouse mapping; the window
+ * size is fixed after creation, so a stale read is benign. */
+static volatile float viewScale = 1.0f;
+static volatile int   viewOffX  = 0;
+static volatile int   viewOffY  = 0;
+
 
 static Uint32 BW2RGB[0x400];
 static Uint32 COL2RGB[0x10000];
 
-/* EwokOS debug: dump the initLatch semaphore and its condition variable
- * to trace heap corruption (SDL_sem: count/waiters/mutex/count_nonzero,
- * SDL_cond: lock/waiting/signals/wait_sem/wait_done) */
-static void dbgDumpLatch(const char* tag) {
-    Uint32* s = (Uint32*)initLatch;
-    fprintf(stderr, "[latch] %s sem=%p: %08lx %08lx %08lx %08lx %08lx %08lx\n",
-            tag, (void*)initLatch,
-            (unsigned long)s[0], (unsigned long)s[1], (unsigned long)s[2],
-            (unsigned long)s[3], (unsigned long)s[4], (unsigned long)s[5]);
-    Uint64 cond = *(Uint64*)(s + 4);
-    if (cond > 0x100000 && cond < 0xf0000000ULL) {
-        Uint32* c = (Uint32*)(uintptr_t)cond;
-        fprintf(stderr, "[latch] %s cond=%p: %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx\n",
-                tag, (void*)(uintptr_t)cond,
-                (unsigned long)c[0], (unsigned long)c[1], (unsigned long)c[2],
-                (unsigned long)c[3], (unsigned long)c[4], (unsigned long)c[5],
-                (unsigned long)c[6], (unsigned long)c[7]);
-    }
-}
-
-static Uint32 bw2rgb(SDL_PixelFormat* format, int bw) {
+/* EwokOS: the composite frame is a plain ARGB8888 buffer consumed by
+ * the graph library, so the lookup tables map straight to 0xAARRGGBB */
+static Uint32 bw2rgb(int bw) {
     switch(bw & 3) {
-        case 3:  return SDL_MapRGB(format, 0,   0,   0);
-        case 2:  return SDL_MapRGB(format, 85,  85,  85);
-        case 1:  return SDL_MapRGB(format, 170, 170, 170);
-        case 0:  return SDL_MapRGB(format, 255, 255, 255);
+        case 3:  return 0xFF000000;
+        case 2:  return 0xFF555555;
+        case 1:  return 0xFFAAAAAA;
+        case 0:  return 0xFFFFFFFF;
         default: return 0;
     }
 }
 
-static Uint32 col2rgb(SDL_PixelFormat* format, int col) {
+static Uint32 col2rgb(int col) {
     int r = col & 0xF000; r >>= 12; r |= r << 4;
     int g = col & 0x0F00; g >>= 8;  g |= g << 4;
     int b = col & 0x00F0; b >>= 4;  b |= b << 4;
-    return SDL_MapRGB(format, r,   g,   b);
+    return 0xFF000000 | (r << 16) | (g << 8) | b;
 }
 
 /*
  BW format is 2bit per pixel
  */
-static void blitBW(SDL_Texture* tex) {
-    void* pixels;
-    int   d;
+static void blitBW(Uint32* dst) {
     int   pitch = (NeXT_SCRN_WIDTH + (ConfigureParams.System.bTurbo ? 0 : 32)) / 4;
-    SDL_LockTexture(tex, NULL, &pixels, &d);
-    Uint32* dst = (Uint32*)pixels;
     for(int y = 0; y < NeXT_SCRN_HEIGHT; y++) {
         int src     = y * pitch;
         for(int x = 0; x < NeXT_SCRN_WIDTH/4; x++, src++) {
@@ -110,124 +101,106 @@ static void blitBW(SDL_Texture* tex) {
             *dst++  = BW2RGB[idx+3];
         }
     }
-    SDL_UnlockTexture(tex);
 }
 
 /*
  Color format is 4bit per pixel, big-endian: RGBx
  */
-static void blitColor(SDL_Texture* tex) {
-    void* pixels;
-    int   d;
+static void blitColor(Uint32* dst) {
     int pitch = NeXT_SCRN_WIDTH + (ConfigureParams.System.bTurbo ? 0 : 32);
-    SDL_LockTexture(tex, NULL, &pixels, &d);
-    Uint32* dst = (Uint32*)pixels;
     for(int y = 0; y < NeXT_SCRN_HEIGHT; y++) {
         Uint16* src = (Uint16*)NEXTColorVideo + (y*pitch);
         for(int x = 0; x < NeXT_SCRN_WIDTH; x++) {
             *dst++ = COL2RGB[*src++];
         }
     }
-    SDL_UnlockTexture(tex);
 }
 
 /*
  Dimension format is 8bit per pixel, big-endian: RRGGBBAA
- */
-void blitDimension(SDL_Texture* tex) {
+ (nd_sdl.c keeps its own texture-based blitDimension() for the
+ DUAL-monitor NeXTdimension window; on EwokOS only this single-window
+ path runs) */
+static void blitDimensionMain(Uint32* dst) {
 #if ND_STEP
     Uint32* src = (Uint32*)&ND_vram[0];
 #else
     Uint32* src = (Uint32*)&ND_vram[16];
 #endif
-    void*   pixels;
-    int     d;
-    Uint32  format;
-    SDL_QueryTexture(tex, &format, &d, &d, &d);
-    SDL_LockTexture(tex, NULL, &pixels, &d);
-    Uint32* dst = (Uint32*)pixels;
-    if(SDL_BYTEORDER == SDL_BIG_ENDIAN) {
-        /* Add big-endian accelerated blit loops as needed here */
-        switch (format) {
-            default: {
-                /* fallback to SDL_MapRGB */
-                SDL_PixelFormat* pformat = SDL_AllocFormat(format);
-                for(int y = NeXT_SCRN_HEIGHT; --y >= 0;) {
-                    for(int x = NeXT_SCRN_WIDTH; --x >= 0;) {
-                        Uint32 v = *src++;
-                        *dst++   = SDL_MapRGB(pformat, (v >> 24) & 0xFF, (v>>16) & 0xFF, (v>>8) & 0xFF);
-                    }
-                    src += 32;
-                }
-                SDL_FreeFormat(pformat);
-                break;
-            }
+    for(int y = NeXT_SCRN_HEIGHT; --y >= 0;) {
+        for(int x = NeXT_SCRN_WIDTH; --x >= 0;) {
+            // guest stores RRGGBBAA big-endian; a LE word read yields
+            // AABBGGRR -> convert to AARRGGBB
+            Uint32 v = *src++;
+            *dst++   = (v & 0xFF000000) | ((v<<16) &0x00FF0000) | (v &0x0000FF00) | ((v>>16) &0x000000FF);
         }
-    } else {
-        /* Add little-endian accelerated blit loops as needed here */
-        switch (format) {
-            case SDL_PIXELFORMAT_ARGB8888:
-                for(int y = NeXT_SCRN_HEIGHT; --y >= 0;) {
-                    for(int x = NeXT_SCRN_WIDTH; --x >= 0;) {
-                        // Uint32 LE: AABBGGRR
-                        // Target:    AARRGGBB
-                        Uint32 v = *src++;
-                        *dst++   = (v & 0xFF000000) | ((v<<16) &0x00FF0000) | (v &0x0000FF00) | ((v>>16) &0x000000FF);
-                    }
-                    src += 32;
-                }
-                break;
-            default: {
-                /* fallback to SDL_MapRGB */
-                SDL_PixelFormat* pformat = SDL_AllocFormat(format);
-                for(int y = NeXT_SCRN_HEIGHT; --y >= 0;) {
-                    for(int x = NeXT_SCRN_WIDTH; --x >= 0;) {
-                        Uint32 v = SDL_Swap32(*src++);
-                        *dst++   = SDL_MapRGB(pformat, (v >> 24) & 0xFF, (v>>16) & 0xFF, (v>>8) & 0xFF);
-                    }
-                    src += 32;
-                }
-                SDL_FreeFormat(pformat);
-                break;
-            }
-        }
+        src += 32;
     }
-    SDL_UnlockTexture(tex);
 }
 
 /*
- Blit NeXT framebuffer to texture.
+ EwokOS: link stub for the DUAL-monitor NeXTdimension window repaint
+ (nd_sdl.c).  The SDL driver here is single-window, so that second
+ window never displays; the real dimension frame goes through
+ blitDimensionMain() below.
  */
-static void blitScreen(SDL_Texture* tex) {
+void blitDimension(SDL_Texture* tex) {
+    (void)tex;
+}
+
+/*
+ Blit NeXT framebuffer to the composite source buffer.
+ */
+static void blitScreen(Uint32* dst) {
     if (ConfigureParams.Screen.nMonitorType==MONITOR_TYPE_DIMENSION) {
-        blitDimension(tex);
+        blitDimensionMain(dst);
         return;
     }
     if(ConfigureParams.System.bColor) {
-        blitColor(tex);
+        blitColor(dst);
     } else {
-        blitBW(tex);
+        blitBW(dst);
+    }
+}
+
+static void uiUpdate(void); /* defined below, used to prime the overlay */
+
+/*
+ EwokOS: merge the NeXT framebuffer with the UI overlay (status bar +
+ dialogs).  uiUpdate()/statusBarUpdate() turned the green-screen mask
+ pixels into fully transparent ones, so per pixel it is a plain select,
+ exactly what the renderer's alpha blend produced before.
+ */
+static void compositeFrame(Uint32* comp, const Uint32* fb, const Uint8* ui,
+                           int w, int h, int uiPitch) {
+    for(int y = 0; y < h; y++) {
+        const Uint32* urow = (const Uint32*)(ui + (size_t)y * uiPitch);
+        const Uint32* frow = fb + (size_t)y * w;
+        Uint32*       crow = comp + (size_t)y * w;
+        for(int x = 0; x < w; x++) {
+            Uint32 u = urow[x];
+            crow[x] = (u & 0xFF000000) ? u : frow[x];
+        }
     }
 }
 
 /*
  Initializes SDL graphics and then enters repaint loop.
- Loop: Blits the NeXT framebuffer to the fbTexture, blends with the GUI surface and
- shows it.
+ Loop: Blits the NeXT framebuffer, blends in the GUI surface and scales
+ the logical frame into the window with the graph library (smooth
+ letterboxing like macemu's xwin backend).
  */
 static int repainter(void* unused) {
     int width;
     int height;
-    int winW, winH;
 
     SDL_SetThreadPriority(SDL_THREAD_PRIORITY_NORMAL);
-    SDL_GetWindowSize(sdlWindow, &winW, &winH);
     /* EwokOS: the window manager may clamp the window smaller than
-     * requested (e.g. desktop 1280x800 minus titlebar). All surfaces
-     * and textures must use the logical emulator size; the renderer's
-     * logical-size scaling maps it onto the actual window. Writing
-     * NeXT_SCRN_HEIGHT rows into a texture sized after the clamped
-     * window would overflow the heap. */
+     * requested (e.g. desktop 1280x800 minus titlebar). All buffers
+     * use the logical emulator size; the repaint loop letterboxes the
+     * logical frame onto the actual window with graph_scale_tof_fast().
+     * Writing NeXT_SCRN_HEIGHT rows into a buffer sized after the
+     * clamped window would overflow the heap. */
     width  = NeXT_SCRN_WIDTH;
     height = NeXT_SCRN_HEIGHT + Statusbar_GetHeight();
 
@@ -236,51 +209,8 @@ static int repainter(void* unused) {
     statusBar.w = width;
     statusBar.h = height - NeXT_SCRN_HEIGHT;
 
-    fprintf(stderr, "EWOK-TRACE: window %dx%d, logical screen %dx%d\n",
-            winW, winH, width, height);
-    
-    SDL_Texture*  uiTexture;
-    SDL_Texture*  fbTexture;
-    
-    Uint32 r, g, b, a;
-    
-    sdlRenderer = SDL_CreateRenderer(sdlWindow, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (!sdlRenderer) {
-        fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
-        SDL_Quit();
-        exit(-2);
-    }
-    SDL_RenderSetLogicalSize(sdlRenderer, width, height);
-    dbgDumpLatch("after-renderer");
-    
-    uiTexture = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
-    if (!uiTexture) {
-        fprintf(stderr, "SDL_CreateTexture(ui) failed: %s\n", SDL_GetError());
-        SDL_Quit();
-        exit(-2);
-    }
-    SDL_SetTextureBlendMode(uiTexture, SDL_BLENDMODE_BLEND);
-    
-    fbTexture = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
-    if (!fbTexture) {
-        fprintf(stderr, "SDL_CreateTexture(fb) failed: %s\n", SDL_GetError());
-        SDL_Quit();
-        exit(-2);
-    }
-    SDL_SetTextureBlendMode(fbTexture, SDL_BLENDMODE_NONE);
-    
-    Uint32 format;
-    int    d;
-    SDL_QueryTexture(uiTexture, &format, &d, &d, &d);
-    SDL_PixelFormatEnumToMasks(format, &d, &r, &g, &b, &a);
-    if (r == 0 && g == 0 && b == 0 && a == 0) {
-        /* EwokOS: SDL_PixelFormatEnumToMasks() failed; use fixed masks
-         * matching SDL_PIXELFORMAT_ARGB8888 (AARRGGBB on little endian) */
-        a = 0xFF000000;
-        r = 0x00FF0000;
-        g = 0x0000FF00;
-        b = 0x000000FF;
-    }
+    /* fixed ARGB8888 (AARRGGBB) masks, matching the graph library */
+    Uint32 r = 0x00FF0000, g = 0x0000FF00, b = 0x000000FF, a = 0xFF000000;
     mask = g | a;
     sdlscrn     = SDL_CreateRGBSurface(SDL_SWSURFACE, width, height, 32, r, g, b, a);
     if (!sdlscrn) {
@@ -288,17 +218,20 @@ static int repainter(void* unused) {
         SDL_Quit();
         exit(-2);
     }
-    uiBuffer    = malloc(sdlscrn->h * sdlscrn->pitch);
-    uiBufferTmp = malloc(sdlscrn->h * sdlscrn->pitch);
-    if (!uiBuffer || !uiBufferTmp) {
-        fprintf(stderr, "uiBuffer malloc failed (%d x %d)\n",
-                sdlscrn->h, sdlscrn->pitch);
+    /* calloc: the first composite runs before the guest has produced a
+     * frame; uninitialised fbBuf would show through the transparent UI */
+    uiBuffer    = calloc(1, sdlscrn->h * sdlscrn->pitch);
+    uiBufferTmp = calloc(1, sdlscrn->h * sdlscrn->pitch);
+    fbBuf       = calloc(1, (size_t)width * height * 4);
+    compositeBuf= calloc(1, (size_t)width * height * 4);
+    if (!uiBuffer || !uiBufferTmp || !fbBuf || !compositeBuf) {
+        fprintf(stderr, "screen buffer malloc failed (%d x %d)\n",
+                width, height);
         SDL_Quit();
         exit(-2);
     }
     // clear UI with mask
     SDL_FillRect(sdlscrn, NULL, mask);
-    dbgDumpLatch("after-buffers");
     
     /* Exit if we can not open a screen */
     if (!sdlscrn) {
@@ -313,7 +246,10 @@ static int repainter(void* unused) {
     }
     
     Statusbar_Init(sdlscrn);
-    dbgDumpLatch("after-statusbar");
+    
+    /* EwokOS: prime the UI overlay so the first composite picks up the
+     * status bar (also sets blitUI so it reaches the repaint loop) */
+    uiUpdate();
     
 	if (bGrabMouse) {
 		SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -321,69 +257,183 @@ static int repainter(void* unused) {
     }
 
 	/* Configure some SDL stuff: */
-	SDL_ShowCursor(SDL_DISABLE);
+	/* EwokOS: keep the host cursor visible here; the repaint loop below
+	 * hides it only after NeXTSTEP has booted (boot ROM / bootloader run
+	 * with the PC inside the ROM, so they need the cursor) */
+	SDL_ShowCursor(SDL_ENABLE);
     
     /* Setup lookup tables */
-    SDL_PixelFormat* pformat = SDL_AllocFormat(format);
     /* initialize BW lookup table */
     for(int i = 0; i < 0x100; i++) {
-        BW2RGB[i*4+0] = bw2rgb(pformat, i>>6);
-        BW2RGB[i*4+1] = bw2rgb(pformat, i>>4);
-        BW2RGB[i*4+2] = bw2rgb(pformat, i>>2);
-        BW2RGB[i*4+3] = bw2rgb(pformat, i>>0);
+        BW2RGB[i*4+0] = bw2rgb(i>>6);
+        BW2RGB[i*4+1] = bw2rgb(i>>4);
+        BW2RGB[i*4+2] = bw2rgb(i>>2);
+        BW2RGB[i*4+3] = bw2rgb(i>>0);
     }
     /* initialize color lookup table */
     for(int i = 0; i < 0x10000; i++)
-        COL2RGB[SDL_BYTEORDER == SDL_BIG_ENDIAN ? i : SDL_Swap16(i)] = col2rgb(pformat, i);
-    
+        COL2RGB[SDL_BYTEORDER == SDL_BIG_ENDIAN ? i : SDL_Swap16(i)] = col2rgb(i);
+
+    /* the window surface is backed directly by the xwin shm graph */
+    SDL_Surface* winSurf = SDL_GetWindowSurface(sdlWindow);
+    if (!winSurf) {
+        fprintf(stderr, "SDL_GetWindowSurface failed: %s\n", SDL_GetError());
+        SDL_Quit();
+        exit(-2);
+    }
+
     /* Initialization done -> signal */
-    dbgDumpLatch("before-post");
     SDL_SemPost(initLatch);
     
     /* Start with framebuffer blit enabled */
     SDL_AtomicSet(&blitFB, 1);
     
+    /* Letterbox scaling cache (refilled by graph_scale_tof_fast()) */
+    graph_t* scaled = NULL;
+    int   lastGW = -1, lastGH = -1, lastSW = -1, lastSH = -1;
+    float lastScale = -1.0f;
+    Uint32 lastPresent = 0;
+
+    /* EwokOS: hide the host cursor only once NeXTSTEP has taken over.
+     * While the boot ROM / bootloader runs, regs.pc stays inside the ROM
+     * and the host cursor must stay visible (also un-grabbed: SDL relative
+     * mouse mode hides the cursor unconditionally). The guest OS mouse
+     * driver announces itself by putting the mouse into the KMS polling
+     * mask; shortly after that WindowServer draws the guest cursor, so
+     * that is when the host cursor goes away (the guest draws its own). */
+    Uint32 osMouseSince = 0;
+    Uint32 romSince = 0;
+    bool   hostCursorHidden = false;
+
     /* Enter repaint loop */
     while(doRepaint) {
-        bool updateFB = false;
-        bool updateUI = false;
-        
-        if (SDL_AtomicGet(&blitFB)) {
-            // Blit the NeXT framebuffer to textrue
-            blitScreen(fbTexture);
-            updateFB = true;
-        }
-        
-        // Copy UI surface to texture
-        SDL_AtomicLock(&uiBufferLock);
-        if(SDL_AtomicSet(&blitUI, 0)) {
-            // update full UI texture
-            memcpy(uiBufferTmp, uiBuffer, sdlscrn->h * sdlscrn->pitch);
-            updateUI = true;
-            static int uiTraced = 0;
-            if (uiTraced < 2) {
-                uiTraced++;
-                fprintf(stderr, "EWOK-REPAINT: UI blit consumed #%d\n", uiTraced);
+        Uint32 now = SDL_GetTicks();
+
+        /* EwokOS: host cursor follows the guest boot state */
+        {
+            uaecptr pc = regs.pc;
+            /* ROM is mapped at $00000000 and mirrored at $01000000 (128kB) */
+            bool inRom = (pc < 0x00020000u) ||
+                         (pc >= 0x01000000u && pc < 0x01020000u);
+            /* guest OS mouse driver alive: mouse in the KMS polling mask
+             * while executing outside the ROM */
+            bool osMouse = !inRom && kms_mouse_enabled();
+
+            /* a single pc sample that lands in the ROM range (e.g. an
+             * exception vector fetch) must not flicker the cursor back
+             * on: require ~200ms of consecutive ROM samples */
+            if (inRom) {
+                if (romSince == 0) romSince = now ? now : 1;
+            } else {
+                romSince = 0;
+            }
+            bool romStable = (romSince != 0) && (now - romSince >= 200);
+
+            if (romStable) {
+                osMouseSince = 0;
+                if (hostCursorHidden) {
+                    hostCursorHidden = false;
+                    SDL_ShowCursor(SDL_ENABLE);
+                }
+                /* relative mode hides the host cursor; keep it off until
+                 * the guest OS has taken over */
+                if (SDL_GetRelativeMouseMode()) {
+                    SDL_SetRelativeMouseMode(SDL_FALSE);
+                    SDL_SetWindowGrab(sdlWindow, SDL_FALSE);
+                }
+            } else if (osMouse) {
+                if (osMouseSince == 0) {
+                    osMouseSince = now ? now : 1;
+                } else if (!hostCursorHidden && now - osMouseSince >= 3000) {
+                    hostCursorHidden = true;
+                    SDL_ShowCursor(SDL_DISABLE);
+                }
             }
         }
-        SDL_AtomicUnlock(&uiBufferLock);
-        
-        if(updateUI) {
-            SDL_UpdateTexture(uiTexture, NULL,       uiBufferTmp, sdlscrn->pitch);
+
+        if (now - lastPresent < 16) { /* ~60fps present cap */
+            host_sleep_ms(2);
+            continue;
         }
-        
-        // Update and render UI texture
+
+        bool updateFB = SDL_AtomicGet(&blitFB) != 0;
+        bool updateUI = false;
+
+        if (updateFB) {
+            // Convert the NeXT framebuffer to ARGB8888
+            blitScreen(fbBuf);
+        }
+
+        // Snapshot the UI overlay
+        SDL_AtomicLock(&uiBufferLock);
+        if(SDL_AtomicSet(&blitUI, 0)) {
+            memcpy(uiBufferTmp, uiBuffer, sdlscrn->h * sdlscrn->pitch);
+            updateUI = true;
+        }
+        SDL_AtomicUnlock(&uiBufferLock);
+
         if (updateFB || updateUI) {
-            SDL_RenderClear(sdlRenderer);
-            // Render NeXT framebuffer texture
-            SDL_RenderCopy(sdlRenderer, fbTexture, NULL, NULL);
-            SDL_RenderCopy(sdlRenderer, uiTexture, NULL, NULL);
-            // SDL_RenderPresent sleeps until next VSYNC because of SDL_RENDERER_PRESENTVSYNC in ScreenInit
-            SDL_RenderPresent(sdlRenderer);
+            /* refetch: the shm buffer may have been rebuilt on resize */
+            winSurf = SDL_GetWindowSurface(sdlWindow);
+            if (winSurf && winSurf->pixels) {
+                compositeFrame(compositeBuf, fbBuf, (const Uint8*)uiBufferTmp,
+                               width, height, sdlscrn->pitch);
+
+                graph_t cg;
+                graph_init(&cg, compositeBuf, width, height);
+                graph_t wg;
+                graph_init(&wg, (const uint32_t*)winSurf->pixels,
+                           winSurf->w, winSurf->h);
+
+                /* letterbox geometry, macemu on_xwin_repaint() style */
+                float scaleX = (float)wg.w / width;
+                float scaleY = (float)wg.h / height;
+                float scale  = (scaleX < scaleY) ? scaleX : scaleY;
+                if (scale < 0.5f) scale = 0.5f;
+                int scaledW = (int)(width * scale);
+                int scaledH = (int)(height * scale);
+                int offX = (wg.w - scaledW) / 2;
+                int offY = (wg.h - scaledH) / 2;
+                viewScale = scale;
+                viewOffX  = offX;
+                viewOffY  = offY;
+
+                if (lastGW != wg.w || lastGH != wg.h || lastScale != scale) {
+                    /* window geometry changed: clear the letterbox once */
+                    graph_fill_rect(&wg, 0, 0, wg.w, wg.h, 0xFF000000);
+                    lastGW = wg.w; lastGH = wg.h; lastScale = scale;
+                }
+
+                if (scale != 1.0f) {
+                    if (scaled == NULL || lastSW != scaledW || lastSH != scaledH) {
+                        graph_t* tmp = graph_new(NULL, scaledW, scaledH);
+                        if (scaled != NULL)
+                            graph_free(scaled);
+                        scaled = tmp;
+                        lastSW = scaledW; lastSH = scaledH;
+                    }
+                    if (scaled != NULL && scaled->buffer != NULL) {
+                        graph_scale_tof_fast(&cg, scaled, scale);
+                        graph_blt(scaled, 0, 0, scaledW, scaledH,
+                                  &wg, offX, offY, scaledW, scaledH);
+                    } else {
+                        /* cache alloc failed: let graph_blt() scale */
+                        graph_blt(&cg, 0, 0, width, height,
+                                  &wg, offX, offY, scaledW, scaledH);
+                    }
+                } else {
+                    graph_blt(&cg, 0, 0, width, height,
+                              &wg, offX, offY, width, height);
+                }
+                SDL_UpdateWindowSurface(sdlWindow);
+                lastPresent = SDL_GetTicks();
+            }
         } else {
             host_sleep_ms(10);
         }
     }
+    if (scaled != NULL)
+        graph_free(scaled);
     return 0;
 }
 
@@ -422,8 +472,8 @@ void Screen_Init(void) {
         Control_ReparentWindow(width, height, bInFullScreen);
     }
     
-    /* Set new video mode */
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+    /* Set new video mode: the repaint loop scales the logical frame
+     * into the window with the graph library (smooth letterboxing) */
     
     fprintf(stderr, "SDL screen request: %d x %d (%s)\n", width, height, bInFullScreen ? "fullscreen" : "windowed");
     
@@ -441,16 +491,13 @@ void Screen_Init(void) {
     }
     sdlWindow  = SDL_CreateWindow(PROG_NAME, x, SDL_WINDOWPOS_UNDEFINED, width, height,
                                   bInFullScreen ? SDL_WINDOW_FULLSCREEN : 0);
-    fprintf(stderr, "EWOK-TRACE: after SDL_CreateWindow (%p)\n", (void*)sdlWindow);
     if (!sdlWindow) {
         fprintf(stderr,"Failed to create window: %s!\n", SDL_GetError());
         exit(-1);
     }
 
     initLatch     = SDL_CreateSemaphore(0);
-    dbgDumpLatch("created");
     repaintThread = SDL_CreateThread(repainter, "[Previous] screen repaint", NULL);
-    dbgDumpLatch("before-wait");
     SDL_SemWait(initLatch);
 }
 
@@ -464,7 +511,42 @@ void Screen_UnInit(void) {
     doRepaint = false; // stop repaint thread
     int s;
     SDL_WaitThread(repaintThread, &s);
+    /* EwokOS: the repaint thread is gone; free the frame buffers under
+     * the UI lock so an in-flight uiUpdate()/statusBarUpdate() on the
+     * m68k thread (which re-checks under this lock) cannot race us */
+    SDL_AtomicLock(&uiBufferLock);
+    free(fbBuf);       fbBuf = NULL;
+    free(compositeBuf); compositeBuf = NULL;
+    free(uiBuffer);    uiBuffer = NULL;
+    free(uiBufferTmp); uiBufferTmp = NULL;
+    SDL_AtomicUnlock(&uiBufferLock);
     nd_sdl_destroy();
+}
+
+/*-----------------------------------------------------------------------*/
+/**
+ * EwokOS: map window (host) coordinates into the logical emulator
+ * coordinate space (and back) using the letterbox geometry computed by
+ * the repaint thread.  macemu maps its mouse the same way
+ * ((pos - view_offset) / view_scale).
+ */
+void Screen_WindowToLogical(int wx, int wy, int* lx, int* ly) {
+    float scale = viewScale;
+    if (scale <= 0.0f) scale = 1.0f;
+    if (lx) *lx = (int)(((float)wx - viewOffX) / scale);
+    if (ly) *ly = (int)(((float)wy - viewOffY) / scale);
+}
+
+void Screen_LogicalToWindow(int lx, int ly, int* wx, int* wy) {
+    float scale = viewScale;
+    if (scale <= 0.0f) scale = 1.0f;
+    if (wx) *wx = (int)(lx * scale) + viewOffX;
+    if (wy) *wy = (int)(ly * scale) + viewOffY;
+}
+
+float Screen_GetViewScale(void) {
+    float scale = viewScale;
+    return (scale > 0.0f) ? scale : 1.0f;
 }
 
 /*-----------------------------------------------------------------------*/
@@ -551,9 +633,15 @@ static bool shieldStatusBarUpdate;
 
 static void statusBarUpdate(void) {
     if(shieldStatusBarUpdate) return;
+    /* EwokOS: uiBuffer only exists while the repaint thread is up
+     * (allocated late in Screen_Init, freed in Screen_UnInit); a
+     * status bar update racing either edge must not crash */
+    if (uiBuffer == NULL || sdlscrn == NULL)
+        return;
     SDL_LockSurface(sdlscrn);
     SDL_AtomicLock(&uiBufferLock);
-    memcpy(&((Uint8*)uiBuffer)[statusBar.y*sdlscrn->pitch], &((Uint8*)sdlscrn->pixels)[statusBar.y*sdlscrn->pitch], statusBar.h * sdlscrn->pitch);
+    if (uiBuffer != NULL)
+        memcpy(&((Uint8*)uiBuffer)[statusBar.y*sdlscrn->pitch], &((Uint8*)sdlscrn->pixels)[statusBar.y*sdlscrn->pitch], statusBar.h * sdlscrn->pitch);
     SDL_AtomicSet(&blitUI, 1);
     SDL_AtomicUnlock(&uiBufferLock);
     SDL_UnlockSurface(sdlscrn);
@@ -575,14 +663,22 @@ bool Update_StatusBar(void) {
  UI blending with framebuffer texture.
 */
 static void uiUpdate(void) {
+    /* EwokOS: uiBuffer only exists while the repaint thread is up
+     * (allocated late in Screen_Init, freed in Screen_UnInit); a
+     * UI update racing either edge must not crash */
+    if (uiBuffer == NULL || sdlscrn == NULL)
+        return;
     SDL_LockSurface(sdlscrn);
     int     count = sdlscrn->w * sdlscrn->h;
-    Uint32* dst   = (Uint32*)uiBuffer;
     Uint32* src   = (Uint32*)sdlscrn->pixels;
     SDL_AtomicLock(&uiBufferLock);
-    // poor man's green-screen - would be nice if SDL had more blending modes...
-    for(int i = count; --i >= 0; src++)
-        *dst++ = *src == mask ? 0 : *src;
+    /* re-read under the lock: Screen_UnInit frees under this same lock */
+    Uint32* dst   = (Uint32*)uiBuffer;
+    if (dst != NULL) {
+        // poor man's green-screen - would be nice if SDL had more blending modes...
+        for(int i = count; --i >= 0; src++)
+            *dst++ = *src == mask ? 0 : *src;
+    }
     SDL_AtomicSet(&blitUI, 1);
     SDL_AtomicUnlock(&uiBufferLock);
     SDL_UnlockSurface(sdlscrn);
@@ -615,22 +711,14 @@ void SDL_UpdateRect(SDL_Surface *screen, Sint32 x, Sint32 y, Sint32 w, Sint32 h)
  * uiBuffer on the next SDL_UpdateRect.  total <= 0 clears the overlay.
  */
 void Screen_DiskCopySplash(int done, int total) {
-    static bool traced = false;
     if (sdlscrn == NULL)
         return;
 
     if (total <= 0) {
         /* preparation done: clear the overlay, VRAM shows again */
-        fprintf(stderr, "EWOK-SPLASH: clear\n");
         SDL_FillRect(sdlscrn, NULL, mask);
         SDL_UpdateRect(sdlscrn, 0, 0, 0, 0);
         return;
-    }
-
-    if (!traced) {
-        traced = true;
-        fprintf(stderr, "EWOK-SPLASH: draw on %dx%d surface, total=%d\n",
-                sdlscrn->w, sdlscrn->h, total);
     }
 
     Uint32 bg    = SDL_MapRGB(sdlscrn->format, 0xAA, 0xAA, 0xAA);

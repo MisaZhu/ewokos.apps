@@ -35,7 +35,6 @@ static Uint32 intMask=0x00000000;
 
 
 void SID_Read(void) {
-	Log_Printf(LOG_WARN,"SID read at $%08x PC=$%08x\n", IoAccessCurrentAddress,m68k_getpc());
 	IoMem[IoAccessCurrentAddress & 0x1FFFF]=0x00; // slot ID 0
 }
 
@@ -152,22 +151,18 @@ void SCR_Reset(void) {
 
 void SCR1_Read0(void)
 {
-	Log_Printf(LOG_WARN,"SCR1 read at $%08x PC=$%08x\n", IoAccessCurrentAddress,m68k_getpc());
     IoMem[IoAccessCurrentAddress&IO_SEG_MASK] = (scr1&0xFF000000)>>24;
 }
 void SCR1_Read1(void)
 {
-	Log_Printf(LOG_WARN,"SCR1 read at $%08x PC=$%08x\n", IoAccessCurrentAddress,m68k_getpc());
     IoMem[IoAccessCurrentAddress&IO_SEG_MASK] = (scr1&0x00FF0000)>>16;
 }
 void SCR1_Read2(void)
 {
-	Log_Printf(LOG_WARN,"SCR1 read at $%08x PC=$%08x\n", IoAccessCurrentAddress,m68k_getpc());
     IoMem[IoAccessCurrentAddress&IO_SEG_MASK] = (scr1&0x0000FF00)>>8;
 }
 void SCR1_Read3(void)
 {
-	Log_Printf(LOG_WARN,"SCR1 read at $%08x PC=$%08x\n", IoAccessCurrentAddress,m68k_getpc());
     IoMem[IoAccessCurrentAddress&IO_SEG_MASK] = scr1&0x000000FF;
 }
 
@@ -220,7 +215,7 @@ void SCR1_Read3(void)
 
 
 void SCR2_Write0(void)
-{	
+{
 	Uint8 old_scr2_0=scr2_0;
     //	Log_Printf(LOG_WARN,"SCR2 write at $%08x val=$%02x PC=$%08x\n", IoAccessCurrentAddress,IoMem[IoAccessCurrentAddress & IO_SEG_MASK],m68k_getpc());
 	scr2_0=IoMem[IoAccessCurrentAddress & 0x1FFFF];
@@ -274,7 +269,7 @@ void SCR2_Read0(void)
 }
 
 void SCR2_Write1(void)
-{	
+{
     //	Log_Printf(LOG_WARN,"SCR2 write at $%08x val=$%02x PC=$%08x\n", IoAccessCurrentAddress,IoMem[IoAccessCurrentAddress & IO_SEG_MASK],m68k_getpc());
 	scr2_1=IoMem[IoAccessCurrentAddress & 0x1FFFF];
 }
@@ -316,13 +311,11 @@ void SCR2_Read2(void)
 }
 
 void SCR2_Write3(void)
-{	
+{
 	Uint8 old_scr2_3=scr2_3;
     //	Log_Printf(LOG_WARN,"SCR2 write at $%08x val=$%02x PC=$%08x\n", IoAccessCurrentAddress,IoMem[IoAccessCurrentAddress & IO_SEG_MASK],m68k_getpc());
 	scr2_3=IoMem[IoAccessCurrentAddress & 0x1FFFF];
 	if ((old_scr2_3&SCR2_ROM)!=(scr2_3&SCR2_ROM)) {
-		Log_Printf(LOG_WARN,"SCR2 ROM change at $%08x val=%x PC=$%08x\n",
-                   IoAccessCurrentAddress,scr2_3&SCR2_ROM,m68k_getpc());
 		   SCR_ROM_overlay=scr2_3&SCR2_ROM;
 		}
 	if ((old_scr2_3&SCR2_LED)!=(scr2_3&SCR2_LED)) {

@@ -27,6 +27,7 @@
 
 #include "configuration.h"
 #include "ewok_compat.h"
+#include "file.h"
 #include "screen.h"
 
 #define RES_DISKS_DIR "/apps/previous/res/disks"
@@ -576,8 +577,6 @@ static void assign_target(struct mount_entry *e)
 	ConfigureParams.SCSI.target[t].bWriteProtected = false;
 	if (e->pending_idx >= 0)
 		pending_disks[e->pending_idx].target = t;
-	fprintf(stderr, "EWOK-ASSETS: %s -> scsi%d (%s)\n", e->base, t,
-		e->dt == DEVTYPE_CD ? "cd" : "hd");
 }
 
 void Ewok_AutoMountDisks(void)
@@ -684,9 +683,6 @@ void Ewok_AutoMountDisks(void)
 			assign_target(&entries[i]);
 		}
 	}
-	fprintf(stderr, "EWOK-ASSETS: %d mount entr%s, %d pending\n",
-		entry_count, entry_count == 1 ? "y" : "ies",
-		pending_disk_count);
 }
 
 /*----------------------------------------------------------------------*/
@@ -746,8 +742,6 @@ void Ewok_PrepareUserDisks(void)
 
 	copy_base_bytes = 0;
 	copy_last_splash_ms = 0;
-	fprintf(stderr, "EWOK-ASSETS: preparing %d disk image(s), %lld bytes, into %s\n",
-		pending_disk_count, (long long)copy_total_bytes, pending_dst_dir);
 	Screen_DiskCopySplash(0, (int)copy_total_bytes);
 
 	for (int i = 0; i < pending_disk_count; i++) {
@@ -768,19 +762,87 @@ void Ewok_PrepareUserDisks(void)
 			ok = extract_zip_file(zip_path, pending_disks[i].name,
 				dst_path, copy_progress_cb, NULL);
 		}
-		if (ok) {
-			struct stat st;
-			if (stat(dst_path, &st) == 0)
-				fprintf(stderr, "EWOK-ASSETS: prepared %s (%lld bytes)\n",
-					dst_path, (long long)st.st_size);
-		} else {
-			fprintf(stderr, "EWOK-ASSETS: preparing %s FAILED\n", dst_path);
+		if (!ok)
 			fallback_pending(&pending_disks[i]);
-		}
 		copy_base_bytes += pending_sizes[i];
 	}
 
 	/* hide the splash again */
 	Screen_DiskCopySplash(0, -1);
 	pending_disk_count = 0;
+}
+
+/*----------------------------------------------------------------------*/
+/*  ROM staging in the user dir                                          */
+/*----------------------------------------------------------------------*/
+
+/*
+ * The ROM/EEPROM files ship inside the app bundle (CONFDIR), but the
+ * /apps tree must never be written to, and Previous may want to
+ * patch/overwrite the ROM at runtime (also File_Exists() demands the
+ * write bit).  Stage each bundled ROM into <home>/.previous/roms and
+ * point the config at the user copy; ROMs are always loaded from and
+ * written to the user copy.
+ *
+ * Runs early in main() before the SDL window exists, so no splash
+ * callbacks are used here; the images are small (<=128KB).
+ */
+static bool get_user_roms_dir(char *path, size_t size)
+{
+	session_info_t sinfo;
+
+	if (path == NULL || size == 0)
+		return false;
+
+	if (session_get_by_uid(getuid(), &sinfo) != 0 || sinfo.home[0] == 0)
+		return false;
+
+	snprintf(path, size, "%s/.previous/roms", sinfo.home);
+	return true;
+}
+
+static bool stage_rom(const char *roms_dir, const char *name, char *cfg_path)
+{
+	char bundled[FILENAME_MAX];
+	char user_rom[FILENAME_MAX];
+
+	/* an existing user-chosen ROM outside the app bundle is kept;
+	 * anything pointing into /apps is migrated to the user copy */
+	if (cfg_path[0] != '\0' && File_Exists(cfg_path) &&
+	    strncmp(cfg_path, "/apps/", 6) != 0)
+		return true;
+
+	snprintf(bundled, sizeof(bundled), CONFDIR "%s", name);
+	if (!File_Exists(bundled)) {
+		/* no bundled ROM: fall back to the configured path */
+		return cfg_path[0] != '\0' && File_Exists(cfg_path);
+	}
+
+	snprintf(user_rom, sizeof(user_rom), "%s/%s", roms_dir, name);
+	/* always go through the size-checked copy: a truncated user ROM
+	 * (interrupted first run) would hang the guest at reset with a
+	 * pure-white screen, and mere existence does not catch that */
+	if (!copy_file_if_needed(bundled, user_rom, NULL, NULL))
+		return false;
+
+	snprintf(cfg_path, FILENAME_MAX, "%s", user_rom);
+	return true;
+}
+
+void Ewok_FixAssetPaths(void)
+{
+	char roms_dir[FILENAME_MAX];
+
+	if (!get_user_roms_dir(roms_dir, sizeof(roms_dir)) ||
+	    !ensure_dir_exists(roms_dir))
+		return;
+
+	stage_rom(roms_dir, "Rev_1.0_v41.BIN",
+		ConfigureParams.Rom.szRom030FileName);
+	stage_rom(roms_dir, "Rev_2.5_v66.BIN",
+		ConfigureParams.Rom.szRom040FileName);
+	stage_rom(roms_dir, "Rev_3.3_v74.BIN",
+		ConfigureParams.Rom.szRomTurboFileName);
+	stage_rom(roms_dir, "dimension_eeprom.bin",
+		ConfigureParams.Dimension.szRomFileName);
 }

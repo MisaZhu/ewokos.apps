@@ -21,6 +21,8 @@ void kms_mouse_button(bool left, bool down);
 
 void kms_response(void);
 
+bool kms_mouse_enabled(void); /* EwokOS: guest OS mouse driver active? */
+
 void kms_sndout_underrun(void);
 void kms_sndin_overrun(void);
 

@@ -106,19 +106,15 @@ static void tmc_void_write(Uint8 val) {
 
 /* SCR1 */
 static Uint8 tmc_scr1_read0(void) {
-	Log_Printf(LOG_WARN,"[TMC] SCR1 read at $0x2200000 PC=$%08x\n",m68k_getpc());
 	return (tmc.scr1>>24);
 }
 static Uint8 tmc_scr1_read1(void) {
-	Log_Printf(LOG_WARN,"[TMC] SCR1 read at $0x2200001 PC=$%08x\n",m68k_getpc());
 	return (tmc.scr1>>16);
 }
 static Uint8 tmc_scr1_read2(void) {
-	Log_Printf(LOG_WARN,"[TMC] SCR1 read at $0x2200002 PC=$%08x\n",m68k_getpc());
 	return (tmc.scr1>>8);
 }
 static Uint8 tmc_scr1_read3(void) {
-	Log_Printf(LOG_WARN,"[TMC] SCR1 read at $0x2200003 PC=$%08x\n",m68k_getpc());
 	return tmc.scr1;
 }
 
@@ -308,11 +304,9 @@ Uint32 tmc_lget(uaecptr addr) {
     }
 	
 	if (addr==0x02210000) {
-		Log_Printf(LOG_WARN, "[TMC] Nitro register lget from $%08X",addr);
 		if (ConfigureParams.System.nCpuFreq==40) {
 			val = tmc.nitro;
 		} else {
-			Log_Printf(LOG_WARN, "[TMC] No nitro --> bus error!");
 			M68000_BusError(addr, 1);
 		}
 		return val;
@@ -393,11 +387,9 @@ void tmc_lput(uaecptr addr, Uint32 l) {
 	}
 	
 	if (addr==0x02210000) {
-		Log_Printf(LOG_WARN, "[TMC] Nitro register lput %08X at $%08X",l,addr);
 		if (ConfigureParams.System.nCpuFreq==40) {
 			tmc.nitro = l&0x0000011F;
 		} else {
-			Log_Printf(LOG_WARN, "[TMC] No nitro --> bus error!");
 			M68000_BusError(addr, 0);
 		}
 		return;

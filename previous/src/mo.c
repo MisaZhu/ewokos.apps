@@ -1706,7 +1706,6 @@ void MO_InterruptHandler(void) {
 
 /* Initialize/Uninitialize MO disks */
 void MO_Init(void) {
-    Log_Printf(LOG_WARN, "Loading magneto-optical disks:");
     int i;
     
     for (i=0; i<MO_MAX_DRIVES; i++) {
@@ -1759,7 +1758,8 @@ void MO_Init(void) {
             modrv[i].attn=false;
         }
 
-        Log_Printf(LOG_WARN, "MO Disk%i: %s\n",i,ConfigureParams.MO.drive[i].szImageName);
+        if (modrv[i].inserted)
+            Log_Printf(LOG_WARN, "MO Disk%i: %s\n",i,ConfigureParams.MO.drive[i].szImageName);
     }
     
     /* Initialize formatter variables */

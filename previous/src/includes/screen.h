@@ -30,6 +30,10 @@ void Screen_ModeChanged(void);
 bool Update_StatusBar(void);
 void SDL_UpdateRects(SDL_Surface *screen, int numrects, SDL_Rect *rects);
 void SDL_UpdateRect(SDL_Surface *screen, Sint32 x, Sint32 y, Sint32 w, Sint32 h);
-void blitDimension(SDL_Texture* tex);
+
+/* EwokOS: window <-> logical coordinate mapping (letterbox scaling) */
+void Screen_WindowToLogical(int wx, int wy, int* lx, int* ly);
+void Screen_LogicalToWindow(int lx, int ly, int* wx, int* wy);
+float Screen_GetViewScale(void);
 
 #endif  /* ifndef HATARI_SCREEN_H */

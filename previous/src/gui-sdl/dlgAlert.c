@@ -131,6 +131,14 @@ static int DlgAlert_ShowDlg(const char *text)
 	bool bOldMouseVisibility;
 	int nOldMouseX, nOldMouseY;
 
+	if (t == NULL)
+	{
+		/* EwokOS: out of memory; the unformatted text is better
+		 * than dereferencing a NULL buffer (t-1 == -1) below */
+		fprintf(stderr, "DlgAlert_ShowDlg: out of memory, alert: %s\n", text);
+		return false;
+	}
+
 	strcpy(t, text);
 	lines = DlgAlert_FormatTextToBox(t, maxlen, &len);
 	offset = (maxlen-len)/2;
@@ -157,6 +165,8 @@ static int DlgAlert_ShowDlg(const char *text)
 	SDLGui_CenterDlg(alertdlg);
 
 	SDL_GetMouseState(&nOldMouseX, &nOldMouseY);
+	/* EwokOS: map window coords into the logical (scaled) screen space */
+	Screen_WindowToLogical(nOldMouseX, nOldMouseY, &nOldMouseX, &nOldMouseY);
 	bOldMouseVisibility = SDL_ShowCursor(SDL_QUERY);
 	SDL_ShowCursor(SDL_ENABLE);
 

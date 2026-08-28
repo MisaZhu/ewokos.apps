@@ -83,6 +83,8 @@ int Dialog_MainDlg(bool *bReset, bool *bLoadedSnapshot)
 		return false;
 
 	SDL_GetMouseState(&nOldMouseX, &nOldMouseY);
+	/* EwokOS: map window coords into the logical (scaled) screen space */
+	Screen_WindowToLogical(nOldMouseX, nOldMouseY, &nOldMouseX, &nOldMouseY);
 	bOldMouseVisibility = SDL_ShowCursor(SDL_QUERY);
 	SDL_ShowCursor(SDL_ENABLE);
 

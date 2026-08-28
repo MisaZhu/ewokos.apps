@@ -353,7 +353,6 @@ void i860_cpu_device::dump_state()
 void i860_cpu_device::halt(bool state) {
     if(state) {
         m_halt = true;
-        Log_Printf(LOG_WARN, "[i860] **** HALTED ****");
         Statusbar_SetNdLed(0);
     } else {
         Log_Printf(LOG_WARN, "[i860] **** RESTARTED ****");

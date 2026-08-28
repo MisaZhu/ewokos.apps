@@ -749,7 +749,11 @@ int SDLGui_DoDialog(SGOBJ *dlg, SDL_Event *pEventOut)
 	}
 	else
 	{
+		/* EwokOS: on memory-starved systems allocating the dialog
+		 * background can fail; bail out instead of drawing onto a
+		 * half-broken state (callers treat SDLGUI_ERROR as abort) */
 		fprintf(stderr, "SDLGUI_DoDialog: CreateRGBSurface failed: %s\n", SDL_GetError());
+		return SDLGUI_ERROR;
 	}
 
 	/* (Re-)draw the dialog */
@@ -758,6 +762,7 @@ int SDLGui_DoDialog(SGOBJ *dlg, SDL_Event *pEventOut)
 	/* Is the left mouse button still pressed? Yes -> Handle TOUCHEXIT objects here */
 	SDL_PumpEvents();
 	b = SDL_GetMouseState(&i, &j);
+	Screen_WindowToLogical(i, j, &i, &j); /* EwokOS: window -> logical coords */
 
  	/* If current object is the scrollbar, and mouse is still down, we can scroll it */
  	/* also if the mouse pointer has left the scrollbar */
@@ -811,7 +816,9 @@ int SDLGui_DoDialog(SGOBJ *dlg, SDL_Event *pEventOut)
 					break;
 				}
 				/* It was the left button: Find the object under the mouse cursor */
-				obj = SDLGui_FindObj(dlg, sdlEvent.button.x, sdlEvent.button.y);
+				/* EwokOS: map window coords into logical dialog space */
+				Screen_WindowToLogical(sdlEvent.button.x, sdlEvent.button.y, &i, &j);
+				obj = SDLGui_FindObj(dlg, i, j);
 				if (obj>0)
 				{
 					if (dlg[obj].type==SGBUTTON)
@@ -844,7 +851,9 @@ int SDLGui_DoDialog(SGOBJ *dlg, SDL_Event *pEventOut)
 					break;
 				}
 				/* It was the left button: Find the object under the mouse cursor */
-				obj = SDLGui_FindObj(dlg, sdlEvent.button.x, sdlEvent.button.y);
+				/* EwokOS: map window coords into logical dialog space */
+				Screen_WindowToLogical(sdlEvent.button.x, sdlEvent.button.y, &i, &j);
+				obj = SDLGui_FindObj(dlg, i, j);
 				if (obj>0)
 				{
 					switch (dlg[obj].type)

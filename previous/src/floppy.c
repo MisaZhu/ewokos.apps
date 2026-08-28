@@ -263,7 +263,6 @@ int flp_io_drv = 0;
 
 
 void floppy_reset(bool hard) {
-    Log_Printf(LOG_WARN,"[Floppy] Reset.");
     
     flp.sra &= ~(SRA_INT|SRA_STEP|SRA_HDSEL|SRA_DIR);
     flp.srb &= ~(SRB_R_TOGGLE|SRB_W_TOGGLE);
@@ -701,8 +700,6 @@ static void floppy_specify(void) {
 
     if (cmd_data[1]&0x01) {
         Log_Printf(LOG_WARN, "[Floppy] Specify: Non-DMA mode");
-    } else {
-        Log_Printf(LOG_WARN, "[Floppy] Specify: DMA mode");
     }
     flp.msr |= STAT_RQM;
 }
@@ -715,7 +712,6 @@ static void floppy_configure(void) {
     if (cmd_data[1]&0x10) {
         Log_Printf(LOG_FLP_CMD_LEVEL, "[Floppy] Configure: disable polling");
         if (CycInt_InterruptActive(INTERRUPT_FLP_IO)) {
-            Log_Printf(LOG_WARN, "[Floppy] Disable pending reset poll interrupt");
             CycInt_RemovePendingInterrupt(INTERRUPT_FLP_IO);
         }
     }
@@ -869,7 +865,6 @@ Uint8 floppy_fifo_read(void) {
         result_size--;
         Log_Printf(LOG_FLP_REG_LEVEL,"[Floppy] FIFO reading byte, val=%02x", val);
     } else {
-        Log_Printf(LOG_WARN,"[Floppy] FIFO is emtpy!");
         val = 0;
     }
     
@@ -1135,7 +1130,6 @@ void FLP_IO_Handler(void) {
 /* Initialize/Uninitialize floppy disks */
 
 static void Floppy_Init(void) {
-    Log_Printf(LOG_WARN, "Loading floppy disks:");
     int i;
     
     for (i=0; i<FLP_MAX_DRIVES; i++) {

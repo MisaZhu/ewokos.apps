@@ -31,7 +31,7 @@ const char Change_fileid[] = "Hatari change.c : " __DATE__ " " __TIME__;
 #include "ethernet.h"
 #include "snd.h"
 
-#define DEBUG 1
+#define DEBUG 0
 #if DEBUG
 #define Dprintf(a) printf(a)
 #else
@@ -49,117 +49,95 @@ bool Change_DoNeedReset(CNF_PARAMS *current, CNF_PARAMS *changed)
     
     /* Did we change ROM file? */
     if (current->System.nMachineType == NEXT_CUBE030 && strcmp(current->Rom.szRom030FileName, changed->Rom.szRom030FileName)) {
-        printf("rom030 reset\n");
         return true;
     }
     if (current->System.nMachineType == NEXT_CUBE040 || current->System.nMachineType == NEXT_STATION) {
         if (!current->System.bTurbo && strcmp(current->Rom.szRom040FileName, changed->Rom.szRom040FileName)) {
-            printf("rom040 reset\n");
             return true;
         }
         if (current->System.bTurbo && strcmp(current->Rom.szRomTurboFileName, changed->Rom.szRomTurboFileName)) {
-            printf("romturbo reset\n");
             return true;
         }
     }
     
     /* Did we change machine type? */
     if (current->System.nMachineType != changed->System.nMachineType) {
-        printf("machine type reset\n");
         return true;
     }
     if (current->System.bColor != changed->System.bColor) {
-        printf("machine type reset (color)\n");
         return true;
     }
     if (current->System.bTurbo != changed->System.bTurbo) {
-        printf("machine type reset (turbo)\n");
         return true;
     }
     
     /* Did we change CPU type? */
     if ((current->System.nCpuLevel != changed->System.nCpuLevel) ||
         (current->System.nCpuFreq != changed->System.nCpuFreq)) {
-        printf("cpu type reset\n");
         return true;
     }
 
     /* Did we change the realtime flag? */
     if(current->System.bRealtime != changed->System.bRealtime) {
-        printf("realtime flag reset\n");
         return true;
     }
 
     /* Did we change FPU type? */
     if (current->System.n_FPUType != changed->System.n_FPUType) {
-        printf("fpu type reset\n");
         return true;
     }
 	
 	/* Did we change DSP type or memory? */
 	if ((current->System.nDSPType != changed->System.nDSPType) ||
 		(current->System.bDSPMemoryExpansion != changed->System.bDSPMemoryExpansion)) {
-		printf("dsp type reset\n");
 		return true;
 	}
 
     /* Did we change SCSI controller? */
     if (current->System.nSCSI != changed->System.nSCSI) {
-        printf("scsi controller reset\n");
         return true;
     }
     
     /* Did we change RTC chip? */
     if (current->System.nRTC != changed->System.nRTC) {
-        printf("rtc chip reset\n");
         return true;
     }
     
     /* Did we change NBIC emulation? */
     if (current->System.bNBIC != changed->System.bNBIC) {
-        printf("nbic reset\n");
         return true;
     }
     
     /* Did we change memory size? */
     for (i = 0; i < 4; i++) {
         if (current->Memory.nMemoryBankSize[i] != changed->Memory.nMemoryBankSize[i]) {
-            printf("memory size reset\n");
             return true;
         }
     }
     
     /* Did we change boot options? */
     if (current->Boot.nBootDevice != changed->Boot.nBootDevice) {
-        printf("boot options reset\n");
         return true;
     }
     if (current->Boot.bEnableDRAMTest != changed->Boot.bEnableDRAMTest) {
-        printf("boot options reset\n");
         return true;
     }
     if (current->Boot.bEnablePot != changed->Boot.bEnablePot) {
-        printf("boot options reset\n");
         return true;
     }
     if (current->Boot.bEnableSoundTest != changed->Boot.bEnableSoundTest) {
-        printf("boot options reset\n");
         return true;
     }
     if (current->Boot.bEnableSCSITest != changed->Boot.bEnableSCSITest) {
-        printf("boot options reset\n");
         return true;
     }
     if (current->Boot.bLoopPot != changed->Boot.bLoopPot) {
-        printf("boot options reset\n");
         return true;
     }
     if (current->Boot.bVerbose != changed->Boot.bVerbose) {
-        printf("boot options reset\n");
         return true;
     }
     if (current->Boot.bExtendedPot != changed->Boot.bExtendedPot) {
-        printf("boot options reset\n");
         return true;
     }
     
@@ -169,19 +147,16 @@ bool Change_DoNeedReset(CNF_PARAMS *current, CNF_PARAMS *changed)
             (current->SCSI.target[i].nDeviceType==DEVTYPE_HARDDISK &&
              (current->SCSI.target[i].bWriteProtected != changed->SCSI.target[i].bWriteProtected ||
               strcmp(current->SCSI.target[i].szImageName, changed->SCSI.target[i].szImageName)))) {
-                 printf("scsi disk reset\n");
                  return true;
              }
     }
     if(current->SCSI.nWriteProtection != changed->SCSI.nWriteProtection) {
-        printf("scsi disk reset\n");
         return true;
     }
     
     /* Did we change MO drive? */
     for (i = 0; i < MO_MAX_DRIVES; i++) {
         if (current->MO.drive[i].bDriveConnected != changed->MO.drive[i].bDriveConnected) {
-            printf("mo drive reset\n");
             return true;
         }
     }
@@ -189,14 +164,12 @@ bool Change_DoNeedReset(CNF_PARAMS *current, CNF_PARAMS *changed)
     /* Did we change floppy drive? */
     for (i = 0; i < FLP_MAX_DRIVES; i++) {
         if (current->Floppy.drive[i].bDriveConnected != changed->Floppy.drive[i].bDriveConnected) {
-            printf("floppy drive reset\n");
             return true;
         }
     }
     
     /* Did we change printer? */
     if (current->Printer.bPrinterConnected != changed->Printer.bPrinterConnected) {
-        printf("printer reset\n");
         return true;
     }
     
@@ -205,12 +178,10 @@ bool Change_DoNeedReset(CNF_PARAMS *current, CNF_PARAMS *changed)
         current->Dimension.bI860Thread != changed->Dimension.bI860Thread ||
 		current->Dimension.bMainDisplay != changed->Dimension.bMainDisplay ||
         strcmp(current->Dimension.szRomFileName, changed->Dimension.szRomFileName)) {
-        printf("dimension reset\n");
 		return true;
     }
     for (i = 0; i < 4; i++) {
         if (current->Dimension.nMemoryBankSize[i] != changed->Dimension.nMemoryBankSize[i]) {
-            printf("dimension memory size reset\n");
             return true;
         }
     }
@@ -219,12 +190,10 @@ bool Change_DoNeedReset(CNF_PARAMS *current, CNF_PARAMS *changed)
 	if (current->Screen.nMonitorType != changed->Screen.nMonitorType &&
 		(current->Screen.nMonitorType == MONITOR_TYPE_DUAL ||
 		 changed->Screen.nMonitorType == MONITOR_TYPE_DUAL)) {
-			printf("monitor reset\n");
 			return true;
 	}
 	
     /* Else no reset is required */
-    printf("No Reset needed!\n");
     return false;
 }
 

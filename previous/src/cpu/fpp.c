@@ -275,9 +275,6 @@ bool fp_exception_pending(bool pre)
 #endif
     // no arithmetic exceptions pending, check for unimplemented datatype
     if (regs.fp_unimp_pend) {
-        if (warned > 0) {
-            write_log (_T("FPU unimplemented datatype exception (%s)\n"), pre ? "pre" : "mid/post");
-        }
         regs.fpu_exp_pre = pre;
         Exception(55);
         regs.fp_unimp_pend = 0;
@@ -290,9 +287,6 @@ bool fp_exception_pending(bool pre)
 void fp_unimp_instruction_exception_pending(void)
 {
     if (regs.fp_unimp_ins) {
-        if (warned > 0) {
-            write_log (_T("FPU unimplemented instruction exception\n"));
-        }
         regs.fpu_exp_pre = true;
         Exception(11);
         regs.fp_unimp_ins = false;
@@ -739,13 +733,6 @@ static void fp_unimp_instruction(uae_u16 opcode, uae_u16 extra, uae_u32 ea, uaec
             }
         }
     }
-    if (warned > 0) {
-        write_log (_T("FPU unimplemented instruction: OP=%04X-%04X SRC=%08X-%08X-%08X EA=%08X PC=%08X\n"),
-                   opcode, extra, fsave_data.et[0],fsave_data.et[1],fsave_data.et[2], ea, oldpc);
-#if EXCEPTION_FPP == 0
-        warned--;
-#endif
-    }
     
     regs.fp_ea = ea;
     regs.fp_opword = opcode;
@@ -812,14 +799,6 @@ static void fp_unimp_datatype(uae_u16 opcode, uae_u16 extra, uae_u32 ea, uaecptr
                 }
             }
         }
-    }
-    if (warned > 0) {
-        write_log (_T("FPU unimplemented datatype (%s): OP=%04X-%04X SRC=%08X-%08X-%08X EA=%08X PC=%08X\n"),
-                   packed ? "packed" : "denormal", opcode, extra,
-                   packed ? fsave_data.fpt[2] : fsave_data.et[0], fsave_data.et[1], fsave_data.et[2], ea, oldpc);
-#if EXCEPTION_FPP == 0
-        warned--;
-#endif
     }
     regs.fp_exception = true;
 }

@@ -439,6 +439,23 @@ static bool kms_device_enabled(int dev_addr) {
     return false;
 }
 
+/* EwokOS: true once the guest has put the mouse device into its KMS
+ * polling mask — the boot ROM / bootloader only use the keyboard, so
+ * this means the guest OS mouse driver is alive (the guest draws its
+ * own cursor from here on). Quiet variant of kms_device_enabled() for
+ * the repaint loop. */
+bool kms_mouse_enabled(void) {
+    int dev_addr = km_address|KM_ADDR_MOUSE;
+    int i,mask;
+
+    for (i=28; i>4; i-=4) {
+        mask=(km_dev_msk>>i)&0xF;
+        if(mask==dev_addr && mask!=0xF)
+            return true;
+    }
+    return false;
+}
+
 void kms_keydown(Uint8 modkeys, Uint8 keycode) {
     if ((keycode==0x26)&&(modkeys&0x18)) { /* backquote and one or both command keys */
         Log_Printf(LOG_WARN, "Keyboard initiated NMI!");
@@ -499,7 +516,7 @@ void kms_mouse_button(bool left, bool down) {
     }
 }
 
-#define MOUSE_STEP_FREQ 1000
+#define MOUSE_STEP_FREQ 200
 
 void kms_mouse_move(int x, bool left, int y, bool up) {
     if (x<0 || y<0) abort();
@@ -507,8 +524,10 @@ void kms_mouse_move(int x, bool left, int y, bool up) {
     m_move_left = left;
     m_move_up   = up;
 
-    int xsteps = x / 8; if(xsteps == 0) xsteps = 1;
-    int ysteps = y / 8; if(ysteps == 0) ysteps = 1;
+    /* EwokOS: small steps at a high drain rate keep the guest cursor
+     * smooth; the upstream /8 steps at 1 kHz jumped visibly */
+    int xsteps = x / 2; if(xsteps == 0) xsteps = 1;
+    int ysteps = y / 2; if(ysteps == 0) ysteps = 1;
     
     m_move_x  = x;
     m_move_dx = x / xsteps;

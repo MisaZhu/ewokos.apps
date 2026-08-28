@@ -363,7 +363,6 @@ Uint8 esp_fifo_read(void) {
         Log_Printf(LOG_ESPFIFO_LEVEL,"ESP FIFO: Reading byte, val=%02x, size = %i", val, fifoflags);
     } else {
         val = 0x00;
-        Log_Printf(LOG_WARN, "ESP FIFO read: FIFO is empty!\n");
     }
     return val;
 }

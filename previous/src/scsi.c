@@ -205,7 +205,9 @@ void SCSI_Insert(Uint8 i) {
     
     SCSIdisk[i].shadow = NULL;
     
-    Log_Printf(LOG_WARN, "SCSI Disk%i: %s\n",i,ConfigureParams.SCSI.target[i].szImageName);
+    if (File_Exists(ConfigureParams.SCSI.target[i].szImageName) &&
+        ConfigureParams.SCSI.target[i].bDiskInserted)
+        Log_Printf(LOG_WARN, "SCSI Disk%i: %s\n",i,ConfigureParams.SCSI.target[i].szImageName);
     
     if (File_Exists(ConfigureParams.SCSI.target[i].szImageName) &&
         ConfigureParams.SCSI.target[i].bDiskInserted) {
@@ -728,12 +730,16 @@ void scsi_write_sector(void) {
             if(SCSIdisk[target].shadow) {
                 if(!(SCSIdisk[target].shadow[SCSIdisk[target].lba]))
                     SCSIdisk[target].shadow[SCSIdisk[target].lba] = malloc(BLOCKSIZE);
-                memcpy(SCSIdisk[target].shadow[SCSIdisk[target].lba], scsi_buffer.data, BLOCKSIZE);
+                /* EwokOS: on OOM drop the write instead of crashing */
+                if(SCSIdisk[target].shadow[SCSIdisk[target].lba])
+                    memcpy(SCSIdisk[target].shadow[SCSIdisk[target].lba], scsi_buffer.data, BLOCKSIZE);
             } else {
                 Uint32 blocks = SCSIdisk[target].size / BLOCKSIZE;
                 SCSIdisk[target].shadow = malloc(sizeof(Uint8*) * blocks);
-                for(int i = blocks; --i >= 0;)
-                    SCSIdisk[target].shadow[i] = NULL;
+                if(SCSIdisk[target].shadow) {
+                    for(int i = blocks; --i >= 0;)
+                        SCSIdisk[target].shadow[i] = NULL;
+                }
             }
         }
         scsi_buffer.limit=BLOCKSIZE;
@@ -1006,8 +1012,6 @@ void SCSI_ModeSense(Uint8 *cdb) {
     Uint8 pagecode = cdb[2] & 0x3F;
     Uint8 dbd = cdb[1] & 0x08; // disable block descriptor
     
-    Log_Printf(LOG_WARN, "[SCSI] Mode Sense: page = %02x, page_control = %i, %s\n", pagecode, pagecontrol, dbd == 0x08 ? "block descriptor disabled" : "block descriptor enabled");
-    
     /* Header */
     retbuf[0] = 0x00; // length of following data
     retbuf[1] = 0x00; // medium type (always 0)
@@ -1026,8 +1030,6 @@ void SCSI_ModeSense(Uint8 *cdb) {
         retbuf[10] = (BLOCKSIZE >> 8) & 0xFF;     // Block size in bytes, med
         retbuf[11] = BLOCKSIZE & 0xFF;     // Block size in bytes, low
         header_size = 12;
-        Log_Printf(LOG_WARN, "[SCSI] Mode Sense: Block descriptor data: %s, size = %i blocks, blocksize = %i byte\n",
-                   SCSIdisk[target].readonly ? "disk is read-only" : "disk is read/write" , sectors, BLOCKSIZE);
     }
     retbuf[0] = header_size - 1;
     

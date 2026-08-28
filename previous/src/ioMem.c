@@ -254,9 +254,6 @@ uae_u32 IoMem_lget(uaecptr addr)
  */
 void IoMem_bput(uaecptr addr, uae_u32 val)
 {
-
-	LOG_TRACE(TRACE_IOMEM_WR, "IO write.b $%06x = $%02x\n", addr, val&0x0ff);
-
 	if ((addr & IO_SEG_MASK) >= IO_SIZE)
 	{
 		/* invalid memory addressing --> bus error */
@@ -288,9 +285,6 @@ void IoMem_bput(uaecptr addr, uae_u32 val)
 void IoMem_wput(uaecptr addr, uae_u32 val)
 {
 	Uint32 idx;
-
-
-	LOG_TRACE(TRACE_IOMEM_WR, "IO write.w $%06x = $%04x\n", addr, val&0xffff);
 
 	if ((addr & IO_SEG_MASK) >= IO_SIZE)
 	{
@@ -330,8 +324,6 @@ void IoMem_wput(uaecptr addr, uae_u32 val)
 void IoMem_lput(uaecptr addr, uae_u32 val)
 {
 	Uint32 idx;
-
-	LOG_TRACE(TRACE_IOMEM_WR, "IO write.l $%06x = $%08x\n", addr, val);
 
 	if ((addr & IO_SEG_MASK) >= IO_SIZE)
 	{
@@ -454,7 +446,7 @@ void IoMem_VoidRead(void)
 void IoMem_VoidWrite(void)
 {
 	/* Nothing... */
-	Log_Printf(LOG_WARN,"IO write at $%08x PC=$%08x\n", IoAccessCurrentAddress,regs.pc);
+	//Log_Printf(LOG_WARN,"IO write at $%08x PC=$%08x\n", IoAccessCurrentAddress,regs.pc);
 }
 
 
@@ -495,7 +487,7 @@ void IoMem_ReadWithoutInterceptionButTrace(void)
  */
 void IoMem_WriteWithoutInterceptionButTrace(void)
 {
-	Log_Printf(LOG_WARN,"IO write at $%08x val=%02x PC=$%08x\n", IoAccessCurrentAddress,IoMem[IoAccessCurrentAddress & IO_SEG_MASK],regs.pc);
+	//Log_Printf(LOG_WARN,"IO write at $%08x val=%02x PC=$%08x\n", IoAccessCurrentAddress,IoMem[IoAccessCurrentAddress & IO_SEG_MASK],regs.pc);
 }
 
 /*-------------------------------------------------------------------------*/

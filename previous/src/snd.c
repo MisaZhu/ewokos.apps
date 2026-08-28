@@ -406,11 +406,9 @@ static void snd_save_volume_reg(void) {
         tmp_vol=SND_MAX_VOL;
     }
     if (chan_lr&1) {
-        Log_Printf(LOG_WARN, "[Sound] Setting volume of left channel to %i",tmp_vol);
         sndout_state.volume[0] = tmp_vol;
     }
     if (chan_lr&2) {
-        Log_Printf(LOG_WARN, "[Sound] Setting volume of right channel to %i",tmp_vol);
         sndout_state.volume[1] = tmp_vol;
     }
 }

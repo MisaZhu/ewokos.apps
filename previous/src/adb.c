@@ -267,30 +267,24 @@ static void adb_write_register(Uint32 addr, Uint32 val) {
 
 
 Uint32 adb_lget(Uint32 addr) {
-	Log_Printf(LOG_WARN, "[ADB] lget at $%08X",addr);
 	return adb_read_register(addr);
 }
 
 Uint16 adb_wget(Uint32 addr) {
-	Uint8 shift;
-	Log_Printf(LOG_WARN, "[ADB] wget at $%08X",addr);
-	
+	Uint8 shift;	
 	shift = (2-(addr&2))*8;
 	addr &= ~3;
 	return (adb_read_register(addr)>>shift)&0xFFFF;
 }
 
 Uint8 adb_bget(Uint32 addr) {
-	Uint8 shift;
-	Log_Printf(LOG_WARN, "[ADB] bget at $%08X",addr);
-	
+	Uint8 shift;	
 	shift = (3-(addr&3))*8;
 	addr &= ~3;
 	return (adb_read_register(addr)>>shift)&0xFF;
 }
 
 void adb_lput(Uint32 addr, Uint32 l) {
-	Log_Printf(LOG_WARN, "[ADB] lput at $%08X",addr);
 	adb_write_register(addr, l);
 }
 

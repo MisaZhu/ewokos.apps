@@ -106,6 +106,12 @@ void Ewok_AutoMountDisks(void);
  * and before the SCSI layer opens the drives */
 void Ewok_PrepareUserDisks(void);
 
+/* src/ewok/ewok_assets.c: stage the bundled ROM/EEPROM files into
+ * the writable user dir (<home>/.previous/roms) and point the config
+ * at the user copies, so the "missing ROM" dialog does not appear at
+ * startup and ROM writes never touch the /apps tree */
+void Ewok_FixAssetPaths(void);
+
 /* src/ewok/ewok_compat.c: turn on the libc heap lock before SDL threads
  * are spawned (call once, single-threaded, early in main()) */
 void Ewok_EnableHeapLock(void);

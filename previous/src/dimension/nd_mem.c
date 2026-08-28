@@ -32,9 +32,12 @@ uae_u32 ND_RAM_bankmask1;
 uae_u32 ND_RAM_bankmask2;
 uae_u32 ND_RAM_bankmask3;
 
-Uint8  ND_ram[64*1024*1024];
-Uint8  ND_vram[4*1024*1024];
-Uint8  ND_rom[128*1024];
+/* EwokOS: allocated on demand in nd_memory_init() when the board is
+ * enabled, so machines without a NeXTdimension board do not carry
+ * 68MB of static memory */
+Uint8  *ND_ram;
+Uint8  *ND_vram;
+Uint8  *ND_rom;
 
 Uint8 ND_dmem[512];
 
@@ -566,7 +569,16 @@ static void nd_init_mem_banks (void)
 }
 
 void nd_memory_init(void) {
-	
+	/* EwokOS: allocate board memory lazily; machines without the
+	 * NeXTdimension board never get here and save 68MB of memory */
+	if (ND_ram == NULL) {
+		ND_ram  = (Uint8*)calloc(64*1024*1024, 1);
+		ND_vram = (Uint8*)calloc(4*1024*1024, 1);
+		ND_rom  = (Uint8*)calloc(128*1024, 1);
+		if (ND_ram == NULL || ND_vram == NULL || ND_rom == NULL)
+			printf("[ND] ERROR: not enough memory for NeXTdimension board!\n");
+	}
+
 	write_log("[ND] Memory init: Memory size: %iMB\n",
               Configuration_CheckDimensionMemory(ConfigureParams.Dimension.nMemoryBankSize));
 

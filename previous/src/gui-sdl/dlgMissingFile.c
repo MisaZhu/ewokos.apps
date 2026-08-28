@@ -135,6 +135,12 @@ void DlgMissing_Rom(const char* type, char *imgname, const char *defname, bool *
                 bQuitProgram = true;
                 break;
                 
+            case SDLGUI_ERROR:
+                /* EwokOS: dialog could not be drawn (e.g. out of memory);
+                 * quit instead of looping over the missing-file dialog */
+                bQuitProgram = true;
+                break;
+                
             default:
                 break;
         }
@@ -198,6 +204,12 @@ void DlgMissing_Disk(const char* type, int num, char *imgname, bool *inserted, b
                 *imgname = '\0';
                 break;
             case DLGMISDSK_QUIT:
+                bQuitProgram = true;
+                break;
+                
+            case SDLGUI_ERROR:
+                /* EwokOS: dialog could not be drawn (e.g. out of memory);
+                 * quit instead of looping over the missing-file dialog */
                 bQuitProgram = true;
                 break;
                 

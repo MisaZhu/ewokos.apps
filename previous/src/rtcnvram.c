@@ -637,7 +637,6 @@ void newrtc_put_clock(Uint8 addr, Uint8 val) {
                 newrtc.status&= ~NRTC_INT_PDOWN;
             }
             if (newrtc.control&NRTC_POWERDOWN) {
-                Log_Printf(LOG_WARN, "[newRTC] Power down!");
                 nvram_save();        /* EwokOS: flush NVRAM, then quit the app */
                 bQuitProgram = true; /* no confirm dialog on guest power-off */
                 M68000_Stop();
@@ -762,13 +761,12 @@ void newrtc_stop_pdown_request(void) {
 /* ------------------- NVRAM host file persistence ------------------- */
 
 /* EwokOS: keep the guest-writable NVRAM contents in a host file so
- * boot monitor (BOM) settings survive emulator restarts. The file
- * lives next to previous.cfg and holds a raw snapshot of rtc.ram
- * followed by newrtc.ram2 (64 bytes total). On load, only the
- * guest-owned bytes are overlaid onto the defaults rebuilt from
- * ConfigureParams, so hardware-config bytes (Ethernet address, SIMM
- * map, clock-chip and console-slot bits) always follow the current
- * configuration. Delete the file to revert to previous.cfg defaults. */
+ * user preferences survive emulator restarts. The file lives next to
+ * previous.cfg and holds a raw snapshot of rtc.ram followed by
+ * newrtc.ram2 (64 bytes total). On load only volume and brightness
+ * are restored: boot command, self-test results and hardware flags
+ * written by the guest turned out to hang the boot ROM on the next
+ * start. Delete the file to revert to previous.cfg defaults. */
 
 #define NVRAM_FILE_NAME     "previous.nvram"
 #define NVRAM_SNAPSHOT_SIZE (32 + 32)
@@ -790,7 +788,6 @@ void nvram_save(void) {
 
     FILE *f = fopen(nvram_filename(), "wb");
     if (!f) {
-        Log_Printf(LOG_WARN, "[NVRAM] cannot write %s\n", nvram_filename());
         return;
     }
     fwrite(buf, 1, sizeof(buf), f);
@@ -806,16 +803,27 @@ static void nvram_load(void) {
     size_t n = fread(buf, 1, sizeof(buf), f);
     fclose(f);
     if (n != sizeof(buf)) {
-        Log_Printf(LOG_WARN, "[NVRAM] ignoring %s (bad size)\n", nvram_filename());
         return;
     }
-    /* Overlay guest-owned bytes only: 0-3 (volume/brightness/flags),
-     * 12-16 (adobe, POT results) and 18-29 (boot command) */
-    memcpy(&rtc.ram[0],  &buf[0],   4);
-    memcpy(&rtc.ram[12], &buf[12],  5);
-    memcpy(&rtc.ram[18], &buf[18], 12);
-    memcpy(newrtc.ram2,  &buf[32], 32);
-    Log_Printf(LOG_WARN, "[NVRAM] loaded settings from %s\n", nvram_filename());
+    /* EwokOS: restore only the user preferences (volume/brightness)
+     * as a bit-masked merge into the freshly built defaults. Restoring
+     * the boot command, POT/self-test results, hardware-password or
+     * reset-reason fields made the boot ROM hang on the second start
+     * (pure-white screen), so those bytes always follow the defaults
+     * rebuilt from ConfigureParams. */
+    {
+        Uint32 cur   = ((Uint32)rtc.ram[0] << 24) | ((Uint32)rtc.ram[1] << 16) |
+                       ((Uint32)rtc.ram[2] << 8)  |  rtc.ram[3];
+        Uint32 saved = ((Uint32)buf[0] << 24) | ((Uint32)buf[1] << 16) |
+                       ((Uint32)buf[2] << 8)  |  buf[3];
+        /* vol_r bits 20-25, brightness bits 14-19, vol_l bits 4-9 */
+        const Uint32 mask = 0x03FFC3F0u;
+        Uint32 merged = (cur & ~mask) | (saved & mask);
+        rtc.ram[0] = merged >> 24;
+        rtc.ram[1] = merged >> 16;
+        rtc.ram[2] = merged >> 8;
+        rtc.ram[3] = merged;
+    }
 }
 
 
@@ -972,13 +980,7 @@ void nvram_checksum(int force) {
     
 	if (force) {
 		rtc.ram[30]=(sum&0xFF00)>>8;
-		rtc.ram[31]=(sum&0xFF);
-		Log_Printf(LOG_WARN,"Forcing RTC checksum to %x %x",rtc.ram[30],rtc.ram[31]);
-	} else {
-		Log_Printf(LOG_WARN,"Check RTC checksum to %x %x %x %x",
-                   rtc.ram[30],(sum&0xFF00)>>8,
-                   rtc.ram[31],(sum&0xFF));
-	}
+		rtc.ram[31]=(sum&0xFF);	} else {	}
 }
 
 

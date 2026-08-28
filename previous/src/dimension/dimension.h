@@ -47,9 +47,12 @@ void   nd_board_wr32_be (Uint32 addr, const Uint32* val);
 void   nd_board_wr64_be (Uint32 addr, const Uint32* val);
 void   nd_board_wr128_be(Uint32 addr, const Uint32* val);
 
-extern Uint8  ND_ram[64*1024*1024];
-extern Uint8  ND_rom[128*1024];
-extern Uint8  ND_vram[4*1024*1024];
+/* EwokOS: allocated on demand in nd_memory_init() only when the
+ * NeXTdimension board is enabled; NULL otherwise. Keeping 68MB of
+ * static BSS for an optional board exhausts memory on small systems. */
+extern Uint8  *ND_ram;   /* 64MB */
+extern Uint8  *ND_rom;   /* 128KB */
+extern Uint8  *ND_vram;  /* 4MB */
 
 typedef void (*i860_run_func)(int);
 extern i860_run_func i860_Run;

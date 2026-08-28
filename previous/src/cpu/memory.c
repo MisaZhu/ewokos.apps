@@ -1213,6 +1213,13 @@ const char* memory_init(int *nNewNEXTMemSize)
 		ret=fread(ROMmemory,1,0x20000,fin);
 		
 		write_log("Read ROM %d\n",ret);
+		if (ret != 0x20000) {
+			/* EwokOS: a truncated staged ROM makes the guest execute
+			 * garbage and hang at reset with a pure-white screen */
+			write_log("WARNING: ROM file is truncated (expected %d bytes), "
+			          "the guest will hang! Delete ~/.previous/roms to re-stage.\n",
+			          0x20000);
+		}
 		fclose(fin);
 	}
 	
