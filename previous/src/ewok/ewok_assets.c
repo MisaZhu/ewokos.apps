@@ -3,7 +3,7 @@
  *
  *  Mirrors macemu's prefs_unix.cpp user-disk flow: bundled images in
  *  /apps/previous/res/disks are prepared into the user's home
- *  (<home>/docs/previous/disks) once the window is visible, and
+ *  (<home>/.previous/disks) once the window is visible, and
  *  mounted from the user copies so guest writes persist across
  *  reboots.  A shipped raw image is copied as-is, a shipped
  *  <name>.zip is unpacked into the user directory; while that runs a
@@ -80,7 +80,7 @@ static bool get_user_disks_dir(char *path, size_t size)
 	if (session_get_by_uid(getuid(), &sinfo) != 0 || sinfo.home[0] == 0)
 		return false;
 
-	snprintf(path, size, "%s/docs/previous/disks", sinfo.home);
+	snprintf(path, size, "%s/.previous/disks", sinfo.home);
 	return true;
 }
 
@@ -556,11 +556,18 @@ static void assign_target(struct mount_entry *e)
 {
 	int t = 0;
 
+	/* a free slot is DEVTYPE_NONE: szImageName is useless as an
+	 * emptiness marker, the defaults fill it with the working dir
+	 * and the config reader ignores empty values, so it is never
+	 * '\0' and every image would be dropped silently */
 	while (t < ESP_MAX_DEVS &&
-	       ConfigureParams.SCSI.target[t].szImageName[0] != '\0')
+	       ConfigureParams.SCSI.target[t].nDeviceType != DEVTYPE_NONE)
 		t++;
-	if (t >= ESP_MAX_DEVS)
+	if (t >= ESP_MAX_DEVS) {
+		fprintf(stderr, "EWOK-ASSETS: no free SCSI target for %s\n",
+			e->base);
 		return;
+	}
 
 	snprintf(ConfigureParams.SCSI.target[t].szImageName, FILENAME_MAX,
 		 "%s/%s", pending_dst_dir, e->base);
@@ -569,6 +576,8 @@ static void assign_target(struct mount_entry *e)
 	ConfigureParams.SCSI.target[t].bWriteProtected = false;
 	if (e->pending_idx >= 0)
 		pending_disks[e->pending_idx].target = t;
+	fprintf(stderr, "EWOK-ASSETS: %s -> scsi%d (%s)\n", e->base, t,
+		e->dt == DEVTYPE_CD ? "cd" : "hd");
 }
 
 void Ewok_AutoMountDisks(void)
