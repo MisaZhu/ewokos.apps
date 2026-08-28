@@ -101,6 +101,11 @@ int fputc(int c, FILE *stream);
  * auto-mount them on the free SCSI targets */
 void Ewok_AutoMountDisks(void);
 
+/* src/ewok/ewok_assets.c: deferred preparation of the pending user
+ * copies (copy/unzip with splash); call once the window is visible
+ * and before the SCSI layer opens the drives */
+void Ewok_PrepareUserDisks(void);
+
 /* src/ewok/ewok_compat.c: turn on the libc heap lock before SDL threads
  * are spawned (call once, single-threaded, early in main()) */
 void Ewok_EnableHeapLock(void);

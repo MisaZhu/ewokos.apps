@@ -434,6 +434,12 @@ static void Main_Init(void) {
 	fprintf(stderr, "EWOK-TRACE: after SDLGui_Init\n");
 	Screen_Init();
 	Main_SetTitle(NULL);
+
+	/* EwokOS: window is visible now; copy/unzip the pending bundled
+	 * disk images into the user dir (with splash) before the SCSI
+	 * layer opens the drives in Reset_Cold() below */
+	Ewok_PrepareUserDisks();
+
 	DSP_Init();
 	M68000_Init();                /* Init CPU emulation */
 	Keymap_Init();

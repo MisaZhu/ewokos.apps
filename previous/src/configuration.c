@@ -366,7 +366,9 @@ void Configuration_SetDefault(void)
     
 	/* Set defaults for Keyboard */
     ConfigureParams.Keyboard.bSwapCmdAlt = false;
-	ConfigureParams.Keyboard.nKeymapType = KEYMAP_SCANCODE;
+	/* EwokOS SDL backend only fills keysym.sym (no scancodes), so use
+	 * symbolic key mapping */
+	ConfigureParams.Keyboard.nKeymapType = KEYMAP_SYMBOLIC;
 	strcpy(ConfigureParams.Keyboard.szMappingFileName, "");
 
     /* Set defaults for Mouse */

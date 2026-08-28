@@ -114,9 +114,13 @@ int SDLGui_Init(void)
 		}
 	}
 
-	/* Set font color 0 as transparent: */
-	SDL_SetColorKey(pSmallFontGfx, 1, 0);
-	SDL_SetColorKey(pBigFontGfx, 1, 0);
+	/* Set font background (white) as transparent. The surfaces are
+	 * ARGB8888 after the conversion above, so the key must be the
+	 * mapped white pixel value, not the 8bpp palette index. */
+	SDL_SetColorKey(pSmallFontGfx, 1,
+	                SDL_MapRGB(pSmallFontGfx->format, 255, 255, 255));
+	SDL_SetColorKey(pBigFontGfx, 1,
+	                SDL_MapRGB(pBigFontGfx->format, 255, 255, 255));
 
 	return 0;
 }

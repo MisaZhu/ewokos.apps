@@ -22,6 +22,7 @@ const char Screen_fileid[] = "Previous fast_screen.c : " __DATE__ " " __TIME__;
 #include "screen.h"
 #include "control.h"
 #include "statusbar.h"
+#include "sdlgui.h"
 #include "video.h"
 
 SDL_Window*   sdlWindow;
@@ -398,8 +399,10 @@ void Screen_Pause(bool pause) {
  * Init Screen, creates window and starts repaint thread
  */
 void Screen_Init(void) {
-    /* Set initial window resolution */
-    bInFullScreen = ConfigureParams.Screen.bFullScreen;
+    /* Set initial window resolution
+     * EwokOS: always run fullscreen, the desktop is too small for the
+     * 1120x856 window and the WM would clamp it anyway */
+    bInFullScreen = true;
     nScreenZoomX  = 1;
     nScreenZoomY  = 1;
 
@@ -431,7 +434,8 @@ void Screen_Init(void) {
             if(r.x >= 0 && SDL_GetNumVideoDisplays() == 1) x = r.x + 8;
         }
     }
-    sdlWindow  = SDL_CreateWindow(PROG_NAME, x, SDL_WINDOWPOS_UNDEFINED, width, height, 0);
+    sdlWindow  = SDL_CreateWindow(PROG_NAME, x, SDL_WINDOWPOS_UNDEFINED, width, height,
+                                  bInFullScreen ? SDL_WINDOW_FULLSCREEN : 0);
     fprintf(stderr, "EWOK-TRACE: after SDL_CreateWindow (%p)\n", (void*)sdlWindow);
     if (!sdlWindow) {
         fprintf(stderr,"Failed to create window: %s!\n", SDL_GetError());
@@ -598,4 +602,48 @@ void SDL_UpdateRects(SDL_Surface *screen, int numrects, SDL_Rect *rects) {
 void SDL_UpdateRect(SDL_Surface *screen, Sint32 x, Sint32 y, Sint32 w, Sint32 h) {
     SDL_Rect rect = { x, y, w, h };
     SDL_UpdateRects(screen, 1, &rect);
+}
+
+/*-----------------------------------------------------------------------
+ * EwokOS: "preparing disk image" splash (macemu VideoDiskCopySplash
+ * equivalent).  Drawn on sdlscrn; the repaint thread picks it up via
+ * uiBuffer on the next SDL_UpdateRect.  total <= 0 clears the overlay.
+ */
+void Screen_DiskCopySplash(int done, int total) {
+    if (sdlscrn == NULL)
+        return;
+
+    if (total <= 0) {
+        /* preparation done: clear the overlay, VRAM shows again */
+        SDL_FillRect(sdlscrn, NULL, mask);
+        SDL_UpdateRect(sdlscrn, 0, 0, 0, 0);
+        return;
+    }
+
+    Uint32 bg    = SDL_MapRGB(sdlscrn->format, 0xAA, 0xAA, 0xAA);
+    Uint32 black = SDL_MapRGB(sdlscrn->format, 0x00, 0x00, 0x00);
+    Uint32 white = SDL_MapRGB(sdlscrn->format, 0xFF, 0xFF, 0xFF);
+
+    SDL_Rect box = { sdlscrn->w/2 - 260, sdlscrn->h/2 - 80, 520, 160 };
+    SDL_FillRect(sdlscrn, &box, bg);
+    SDL_Rect edge;
+    edge = (SDL_Rect){ box.x, box.y, box.w, 2 };             SDL_FillRect(sdlscrn, &edge, black);
+    edge = (SDL_Rect){ box.x, box.y + box.h - 2, box.w, 2 }; SDL_FillRect(sdlscrn, &edge, black);
+    edge = (SDL_Rect){ box.x, box.y, 2, box.h };             SDL_FillRect(sdlscrn, &edge, black);
+    edge = (SDL_Rect){ box.x + box.w - 2, box.y, 2, box.h }; SDL_FillRect(sdlscrn, &edge, black);
+
+    SDLGui_SetScreen(sdlscrn);
+    SDLGui_Text(box.x + 20, box.y + 24, "Preparing disk image...");
+
+    SDL_Rect bar = { box.x + 20, box.y + 96, 480, 30 };
+    SDL_FillRect(sdlscrn, &bar, black);
+    SDL_Rect in = { bar.x + 2, bar.y + 2, bar.w - 4, bar.h - 4 };
+    SDL_FillRect(sdlscrn, &in, white);
+    if (done > 0) {
+        SDL_Rect fill = { in.x, in.y,
+                          (int)((long long)in.w * done / total), in.h };
+        SDL_FillRect(sdlscrn, &fill, black);
+    }
+
+    SDL_UpdateRect(sdlscrn, 0, 0, 0, 0);
 }
