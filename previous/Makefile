@@ -162,5 +162,6 @@ $(ARCH)/ewok/%.o: src/ewok/%.c
 clean:
 	rm -f $(TASK_OBJS)
 	rm -rf $(HOST_DIR)
+	## Only cpuemu_31.c/cpuemu_32.c are generated; cpuemu_common.c is checked in
 	rm -f src/cpu/cpudefs.c src/cpu/cpustbl.c src/cpu/cputbl.h \
-		src/cpu/cpuemu_*.c
+		src/cpu/cpuemu_31.c src/cpu/cpuemu_32.c

@@ -431,7 +431,7 @@ char *BreakCond_MatchDspVariable(const char *text, int state)
 //static bool BreakCond_ParseVariable(const char *name, bc_value_t *bc_value)
 //{
 	/* left, right, middle, direction */
-        int l, r, m, dir;
+//	int l, r, m, dir;
 
 //	ENTERFUNC(("BreakCond_ParseVariable('%s')\n", name));
 	/* bisect */
