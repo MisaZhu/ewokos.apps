@@ -217,14 +217,26 @@ static void blitScreen(SDL_Texture* tex) {
 static int repainter(void* unused) {
     int width;
     int height;
+    int winW, winH;
 
     SDL_SetThreadPriority(SDL_THREAD_PRIORITY_NORMAL);
-    SDL_GetWindowSize(sdlWindow, &width, &height);
-    
+    SDL_GetWindowSize(sdlWindow, &winW, &winH);
+    /* EwokOS: the window manager may clamp the window smaller than
+     * requested (e.g. desktop 1280x800 minus titlebar). All surfaces
+     * and textures must use the logical emulator size; the renderer's
+     * logical-size scaling maps it onto the actual window. Writing
+     * NeXT_SCRN_HEIGHT rows into a texture sized after the clamped
+     * window would overflow the heap. */
+    width  = NeXT_SCRN_WIDTH;
+    height = NeXT_SCRN_HEIGHT + Statusbar_GetHeight();
+
     statusBar.x = 0;
     statusBar.y = NeXT_SCRN_HEIGHT;
     statusBar.w = width;
     statusBar.h = height - NeXT_SCRN_HEIGHT;
+
+    fprintf(stderr, "EWOK-TRACE: window %dx%d, logical screen %dx%d\n",
+            winW, winH, width, height);
     
     SDL_Texture*  uiTexture;
     SDL_Texture*  fbTexture;
