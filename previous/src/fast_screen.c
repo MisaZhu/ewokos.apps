@@ -360,6 +360,11 @@ static int repainter(void* unused) {
             // update full UI texture
             memcpy(uiBufferTmp, uiBuffer, sdlscrn->h * sdlscrn->pitch);
             updateUI = true;
+            static int uiTraced = 0;
+            if (uiTraced < 2) {
+                uiTraced++;
+                fprintf(stderr, "EWOK-REPAINT: UI blit consumed #%d\n", uiTraced);
+            }
         }
         SDL_AtomicUnlock(&uiBufferLock);
         
@@ -610,14 +615,22 @@ void SDL_UpdateRect(SDL_Surface *screen, Sint32 x, Sint32 y, Sint32 w, Sint32 h)
  * uiBuffer on the next SDL_UpdateRect.  total <= 0 clears the overlay.
  */
 void Screen_DiskCopySplash(int done, int total) {
+    static bool traced = false;
     if (sdlscrn == NULL)
         return;
 
     if (total <= 0) {
         /* preparation done: clear the overlay, VRAM shows again */
+        fprintf(stderr, "EWOK-SPLASH: clear\n");
         SDL_FillRect(sdlscrn, NULL, mask);
         SDL_UpdateRect(sdlscrn, 0, 0, 0, 0);
         return;
+    }
+
+    if (!traced) {
+        traced = true;
+        fprintf(stderr, "EWOK-SPLASH: draw on %dx%d surface, total=%d\n",
+                sdlscrn->w, sdlscrn->h, total);
     }
 
     Uint32 bg    = SDL_MapRGB(sdlscrn->format, 0xAA, 0xAA, 0xAA);

@@ -135,6 +135,8 @@ static void copy_progress_cb(off_t done, off_t file_size, void *arg)
 	if (all > copy_total_bytes)
 		all = copy_total_bytes;
 	Screen_DiskCopySplash((int)all, (int)copy_total_bytes);
+	/* yield so the repaint thread gets a slice to present the splash */
+	SDL_Delay(2);
 }
 
 /*----------------------------------------------------------------------*/
@@ -673,6 +675,9 @@ void Ewok_AutoMountDisks(void)
 			assign_target(&entries[i]);
 		}
 	}
+	fprintf(stderr, "EWOK-ASSETS: %d mount entr%s, %d pending\n",
+		entry_count, entry_count == 1 ? "y" : "ies",
+		pending_disk_count);
 }
 
 /*----------------------------------------------------------------------*/
@@ -732,9 +737,9 @@ void Ewok_PrepareUserDisks(void)
 
 	copy_base_bytes = 0;
 	copy_last_splash_ms = 0;
+	fprintf(stderr, "EWOK-ASSETS: preparing %d disk image(s), %lld bytes, into %s\n",
+		pending_disk_count, (long long)copy_total_bytes, pending_dst_dir);
 	Screen_DiskCopySplash(0, (int)copy_total_bytes);
-	printf("preparing %d disk image(s) in %s\n",
-		pending_disk_count, pending_dst_dir);
 
 	for (int i = 0; i < pending_disk_count; i++) {
 		char src_path[512];
@@ -757,10 +762,10 @@ void Ewok_PrepareUserDisks(void)
 		if (ok) {
 			struct stat st;
 			if (stat(dst_path, &st) == 0)
-				printf("prepared %s (%lld bytes)\n", dst_path,
-					(long long)st.st_size);
+				fprintf(stderr, "EWOK-ASSETS: prepared %s (%lld bytes)\n",
+					dst_path, (long long)st.st_size);
 		} else {
-			printf("WARNING: preparing %s failed\n", dst_path);
+			fprintf(stderr, "EWOK-ASSETS: preparing %s FAILED\n", dst_path);
 			fallback_pending(&pending_disks[i]);
 		}
 		copy_base_bytes += pending_sizes[i];
