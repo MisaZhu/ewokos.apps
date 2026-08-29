@@ -15,7 +15,7 @@
 #include "dma.h"
 #include "bmap.h"
 #include "ethernet.h"
-#include "enet_slirp.h"
+#include "enet_ewok.h"
 #include "cycInt.h"
 #include "statusbar.h"
 
@@ -248,9 +248,6 @@ void EN_CounterHi_Read(void) { // 0x0200600f
 }
 
 static void enet_tx_interrupt(Uint8 intr) {
-    /* EwokOS CD-boot diagnosis */
-    fprintf(stderr, "[EN] tx_interrupt intr=$%02x tx_status=$%02x mask=$%02x\n",
-            intr, enet.tx_status, enet.tx_mask);
     enet.tx_status|=intr;
     if (enet.tx_status&enet.tx_mask) {
         set_interrupt(INT_EN_TX, SET_INT);
@@ -258,9 +255,6 @@ static void enet_tx_interrupt(Uint8 intr) {
 }
 
 static void enet_rx_interrupt(Uint8 intr) {
-    /* EwokOS CD-boot diagnosis */
-    fprintf(stderr, "[EN] rx_interrupt intr=$%02x rx_status=$%02x mask=$%02x\n",
-            intr, enet.rx_status, enet.rx_mask);
     enet.rx_status|=intr;
     if (enet.rx_status&enet.rx_mask) {
         set_interrupt(INT_EN_RX, SET_INT);
@@ -377,7 +371,7 @@ static bool enet_packet_for_me(Uint8 *packet) {
 
 void enet_receive(Uint8 *pkt, int len) {
     if (enet_packet_for_me(pkt)) {
-#if 1   /* Hack for short packets from SLIRP */
+#if 1   /* Hack for short packets from the network backend */
         if (len<60) {
             Log_Printf(LOG_WARN, "[EN] HACK: short packet received (%i byte). Fixed.", len);
             len = 60;
@@ -484,7 +478,7 @@ static void enet_io(void) {
 					receiver_state = RECV_STATE_RECEIVING;
 			} else if (en_state == EN_THINWIRE || en_state == EN_TWISTEDPAIR) {
 				/* Receive from real world network */
-				enet_slirp_queue_poll();
+				enet_ewok_queue_poll();
 				break;
 			} else
 				break;
@@ -557,7 +551,7 @@ static void enet_io(void) {
 						enet_receive(enet_tx_buffer.data, enet_tx_buffer.size);
 					} else {
 						/* Send to real world network */
-						enet_slirp_input(enet_tx_buffer.data,enet_tx_buffer.size);
+						enet_ewok_input(enet_tx_buffer.data,enet_tx_buffer.size);
 						/* Simultaneously receive packet on thin ethernet */
 						if (en_state == EN_THINWIRE) {
 							enet_receive(enet_tx_buffer.data, enet_tx_buffer.size);
@@ -638,7 +632,7 @@ static void new_enet_io(void) {
 					receiver_state = RECV_STATE_RECEIVING;
 			} else if (en_state == EN_THINWIRE || en_state == EN_TWISTEDPAIR) {
 				/* Receive from real world network */
-				enet_slirp_queue_poll();
+				enet_ewok_queue_poll();
 				break;
 			} else
 				break;
@@ -697,7 +691,7 @@ static void new_enet_io(void) {
 						enet_receive(enet_tx_buffer.data, enet_tx_buffer.size);
 					} else {
 						/* Send to real world network */
-						enet_slirp_input(enet_tx_buffer.data,enet_tx_buffer.size);
+						enet_ewok_input(enet_tx_buffer.data,enet_tx_buffer.size);
 						/* Simultaneously receive packet on thin ethernet */
 						if (en_state == EN_THINWIRE) {
 							enet_receive(enet_tx_buffer.data, enet_tx_buffer.size);
@@ -721,23 +715,12 @@ static void new_enet_io(void) {
 void ENET_IO_Handler(void) {
 	CycInt_AcknowledgeInterrupt();
 
-	/* EwokOS CD-boot diagnosis: is the periodic ENET IO handler ever run? */
-	{
-		static int enet_io_calls = 0;
-		if (enet_io_calls == 0 || enet_io_calls % 200000 == 0) {
-			fprintf(stderr, "[EN] ENET_IO_Handler call #%d reset=%d stopped=%d recv_state=%d\n",
-			        enet_io_calls, !!(enet.reset&EN_RESET), (int)enet_stopped,
-			        receiver_state);
-		}
-		enet_io_calls++;
-	}
-
 	if (enet.reset&EN_RESET) {
 		Log_Printf(LOG_WARN, "Stopping Ethernet Transmitter/Receiver");
 		enet_stopped=true;
-		/* Stop SLIRP */
+		/* Stop network backend */
 		if (ConfigureParams.Ethernet.bEthernetConnected) {
-			enet_slirp_stop();
+			enet_ewok_stop();
 		}
 		return;
 	}
@@ -758,9 +741,9 @@ void enet_reset(void) {
         Log_Printf(LOG_WARN, "Starting Ethernet Transmitter/Receiver");
         enet_stopped=false;
         CycInt_AddRelativeInterruptUs(ENET_IO_DELAY, 0, INTERRUPT_ENET_IO);
-        /* Start SLIRP */
+        /* Start network backend */
         if (ConfigureParams.Ethernet.bEthernetConnected) {
-            enet_slirp_start();
+            enet_ewok_start();
         }
     }
 }
@@ -772,15 +755,15 @@ void Ethernet_Reset(bool hard) {
         enet_rx_buffer.size=enet_tx_buffer.size=0;
         enet_rx_buffer.limit=enet_tx_buffer.limit=64*1024;
         enet.tx_status=ConfigureParams.System.bTurbo?0:TXSTAT_READY;
-        /* Stop SLIRP */
-        enet_slirp_stop();
+        /* Stop network backend */
+        enet_ewok_stop();
     } else {
         if (ConfigureParams.Ethernet.bEthernetConnected && !(enet.reset&EN_RESET)) {
-            /* Start SLIRP */
-            enet_slirp_start();
+            /* Start network backend */
+            enet_ewok_start();
         } else {
-            /* Stop SLIRP */
-            enet_slirp_stop();
+            /* Stop network backend */
+            enet_ewok_stop();
         }
     }
 }

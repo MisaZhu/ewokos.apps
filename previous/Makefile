@@ -12,7 +12,7 @@ LDFLAGS += -L $(BUILD_DIR)/lib \
 ## ewok_compat.h is force-included everywhere for libc shims.
 PV_DEFS = -include src/ewok/ewok_compat.h -DCONFDIR=\"/apps/previous/res/\"
 PV_INC = -I src/ewok -I src -I src/includes -I src/cpu -I src/debug \
-	-I src/dsp -I src/dimension -I src/slirp -I src/softfloat \
+	-I src/dsp -I src/dimension -I src/softfloat \
 	-I $(BUILD_DIR)/include -I $(BUILD_DIR)/include/SDL2
 
 PV_CFLAGS = $(PV_DEFS) $(PV_INC) -fcommon \
@@ -28,10 +28,12 @@ HOSTCC = cc
 HOST_DIR = host
 
 ## Object groups (mirrors src/CMakeLists.txt and its subdirectories)
+## (enet_slirp/queue and the vendored slirp stack are replaced by the
+## EwokOS socket NAT backend in src/ewok/enet_ewok.c)
 CORE_SRCS = adb audio bmap cfgopts configuration options change \
-	control cycInt dialog dma esp enet_slirp ethernet file floppy \
+	control cycInt dialog dma esp ethernet file floppy \
 	ioMem ioMemTabNEXT ioMemTabTurbo keymap kms m68000 main mo nbic \
-	nextMemory paths printer queue ramdac reset rs rtcnvram scandir \
+	nextMemory paths printer ramdac reset rs rtcnvram scandir \
 	scc fast_screen host scsi shortcut snd statusbar str sysReg tmc \
 	unzip utils video zip
 CORE_OBJS = $(patsubst %,$(ARCH)/core/%.o,$(CORE_SRCS))
@@ -57,18 +59,14 @@ ND_SRCS = dimension nd_mem nd_nbic nd_devs nd_vio nd_rom nd_sdl
 ND_OBJS = $(patsubst %,$(ARCH)/nd/%.o,$(ND_SRCS)) \
 	$(ARCH)/nd/i860.o $(ARCH)/nd/i860dis.o
 
-SLIRP_SRCS = bootp cksum if ip_icmp ip_input ip_output mbuf misc \
-	sbuf slirp slirpdebug socket tcp_input tcp_output tcp_subr \
-	tcp_timer tftp udp
-SLIRP_OBJS = $(patsubst %,$(ARCH)/slirp/%.o,$(SLIRP_SRCS))
-
 SF_SRCS = softfloat softfloat_decimal softfloat_fpsp
 SF_OBJS = $(patsubst %,$(ARCH)/sf/%.o,$(SF_SRCS))
 
-EWOK_OBJS = $(ARCH)/ewok/ewok_compat.o $(ARCH)/ewok/ewok_assets.o
+EWOK_OBJS = $(ARCH)/ewok/ewok_compat.o $(ARCH)/ewok/ewok_assets.o \
+	$(ARCH)/ewok/enet_ewok.o
 
 TASK_OBJS = $(CORE_OBJS) $(CPU_OBJS) $(DEBUG_OBJS) $(GUI_OBJS) \
-	$(DSP_OBJS) $(ND_OBJS) $(SLIRP_OBJS) $(SF_OBJS) $(EWOK_OBJS)
+	$(DSP_OBJS) $(ND_OBJS) $(SF_OBJS) $(EWOK_OBJS)
 
 TASK = previous
 TASK_DIR = $(TARGET_DIR)/apps/$(TASK)
@@ -146,10 +144,6 @@ $(ARCH)/nd/%.o: src/dimension/%.c
 $(ARCH)/nd/%.o: src/dimension/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(PV_CXXFLAGS) $(CXXFLAGS) -O2 -c $< -o $@
-
-$(ARCH)/slirp/%.o: src/slirp/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(PV_CFLAGS) $(CFLAGS) -c $< -o $@
 
 $(ARCH)/sf/%.o: src/softfloat/%.c
 	@mkdir -p $(dir $@)

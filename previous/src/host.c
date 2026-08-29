@@ -35,8 +35,7 @@ static Uint32       ticksStart;
 static bool         enableRealtime;
 static Uint64       hardClockExpected;
 static Uint64       hardClockActual;
-static time_t       unixTimeStart;
-static double       unixTimeOffset = 0;
+static time_t       unixTimeOffset = 0;
 static double       perfFrequency;
 static double       realTimeOffset;
 static Uint64       pauseTimeStamp;
@@ -47,7 +46,6 @@ void host_reset() {
     pauseTimeStamp    = perfCounterStart;
     perfFrequency     = SDL_GetPerformanceFrequency();
     ticksStart        = SDL_GetTicks();
-    unixTimeStart     = time(NULL);
     cycleCounterStart = 0;
     cycleSecsStart    = 0;
     isRealtime        = false;
@@ -161,11 +159,17 @@ Uint32 host_time_ms() {
 }
 
 time_t host_unix_time() {
-    return unixTimeStart + unixTimeOffset + host_time_sec();
+    /* Follow the host wall clock directly (like macemu's
+     * TimeToMacTime(time(NULL))) instead of anchoring at reset and
+     * advancing with emulated virtual time, so the guest RTC stays
+     * correct even when emulation pauses or runs slower than realtime.
+     * unixTimeOffset only deviates from zero when the guest OS
+     * explicitly set its clock via host_set_unix_time(). */
+    return time(NULL) + (time_t)unixTimeOffset;
 }
 
 void host_set_unix_time(time_t now) {
-    unixTimeOffset += difftime(now, host_unix_time());
+    unixTimeOffset = difftime(now, time(NULL));
 }
 
 double host_real_time_offset() {
