@@ -453,9 +453,11 @@ static void Main_Init(void) {
 	Main_SetTitle(NULL);
 
 	/* EwokOS: window is visible now; copy/unzip the pending bundled
-	 * disk images into the user dir (with splash) before the SCSI
-	 * layer opens the drives in Reset_Cold() below */
+	 * disk images into the user dir (with splash), then mount the
+	 * user copies bootable-first onto the free SCSI targets, all
+	 * before the SCSI layer opens the drives in Reset_Cold() below */
 	Ewok_PrepareUserDisks();
+	Ewok_AssignDiskTargets();
 
 	DSP_Init();
 	M68000_Init();                /* Init CPU emulation */
@@ -613,8 +615,14 @@ int main(int argc, char *argv[]) {
 	 * so the "missing ROM" dialog does not appear on every startup */
 	Ewok_FixAssetPaths();
 
-	/* EwokOS: copy bundled disks into the user dir and mount the
-	 * user copies onto the SCSI targets the config left empty */
+	/* EwokOS: emulate a Turbo machine: its Rev_3.3_v74 ROM accepts
+	 * CD-ROM (INQUIRY type 5) boot devices, the non-Turbo v66 ROM
+	 * rejects them with "SCSI error" */
+	Ewok_ConfigureMachine();
+
+	/* EwokOS: scan the bundled/user disks and record the missing
+	 * user copies as pending (extracted once the window is visible,
+	 * then mounted bootable-first onto the free SCSI targets) */
 	Ewok_AutoMountDisks();
     
 #if 0 /* FIXME: This sometimes causes exits when starting from application bundles */

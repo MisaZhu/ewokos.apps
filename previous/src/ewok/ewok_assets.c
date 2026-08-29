@@ -8,6 +8,13 @@
  *  reboots.  A shipped raw image is copied as-is, a shipped
  *  <name>.zip is unpacked into the user directory; while that runs a
  *  "preparing disk" splash with byte progress is shown.
+ *
+ *  SCSI targets are filled bootable-first (macemu boot-candidate
+ *  equivalent): a hard disk whose label sector starts with the
+ *  "NeXT"/"dlV2"/"dlV3" magic the boot ROM checks for is bootable and
+ *  gets target 0, CDs come next, non-bootable hard disks last - so
+ *  with no bootable hard disk the first CD lands on target 0 and the
+ *  ROM boots from it (an install CD next to an empty scratch disk).
  */
 
 #include <dirent.h>
@@ -118,8 +125,11 @@ static bool is_regular_file(const char *path)
 /*  progress callback -> splash (throttled, like macemu)                 */
 /*----------------------------------------------------------------------*/
 
-static off_t copy_base_bytes = 0;
-static off_t copy_total_bytes = 0;
+/* Aggregate progress across all pending disks.  Must be 64-bit even
+ * on 32-bit EwokOS (off_t is long there): two shipped images already
+ * exceed 2GiB combined, and the splash takes ints, so it is fed KiB. */
+static uint64_t copy_base_bytes = 0;
+static uint64_t copy_total_bytes = 0;
 static uint32_t copy_last_splash_ms = 0;
 
 typedef void (*copy_progress_fn)(off_t done, off_t file_size, void *arg);
@@ -132,10 +142,11 @@ static void copy_progress_cb(off_t done, off_t file_size, void *arg)
 	if (done != file_size && now - copy_last_splash_ms < 80)
 		return;
 	copy_last_splash_ms = now;
-	off_t all = copy_base_bytes + done;
+	uint64_t all = copy_base_bytes + (uint64_t)done;
 	if (all > copy_total_bytes)
 		all = copy_total_bytes;
-	Screen_DiskCopySplash((int)all, (int)copy_total_bytes);
+	Screen_DiskCopySplash((int)(all >> 10),
+		(int)((copy_total_bytes + 1023) >> 10));
 	/* yield so the repaint thread gets a slice to present the splash */
 	SDL_Delay(2);
 }
@@ -523,7 +534,8 @@ static bool extract_zip_file(const char *zip_path, const char *want_name,
 }
 
 /*----------------------------------------------------------------------*/
-/*  auto mount: record pending user copies, mount what already exists    */
+/*  scan: collect the disk images, record the missing user copies as     */
+/*  pending (targets are assigned later, once the user copies exist)     */
 /*----------------------------------------------------------------------*/
 
 /* optical-disk-ish images mount read-only as CD devices */
@@ -536,24 +548,25 @@ static SCSI_DEVTYPE devtype_for(const char *name)
 
 #define MAX_PENDING_DISKS 16
 
-struct pending_disk {
-	char name[256];		/* user copy basename (unpacked name) */
-	bool packed;		/* shipped as res/disks/<name>.zip */
-	int target;		/* reserved SCSI target */
-};
-
-static struct pending_disk pending_disks[MAX_PENDING_DISKS];
+/* shipped images whose user copy does not exist yet: recorded by
+ * Ewok_AutoMountDisks() and created by Ewok_PrepareUserDisks() once
+ * the window is visible */
+static char pending_disk_names[MAX_PENDING_DISKS][256];
 static int pending_disk_count = 0;
 static char pending_src_dir[256];
 static char pending_dst_dir[256];
 
 struct mount_entry {
-	char base[256];
+	char base[256];		/* user copy basename (unpacked name) */
 	SCSI_DEVTYPE dt;
-	int pending_idx;	/* -1: user copy exists, mount now */
 };
 
-static void assign_target(struct mount_entry *e)
+/* collected by Ewok_AutoMountDisks(), mounted by
+ * Ewok_AssignDiskTargets() after the pending user copies exist */
+static struct mount_entry mount_entries[MAX_PENDING_DISKS * 2 + 8];
+static int mount_entry_count = 0;
+
+static void assign_target(const struct mount_entry *e)
 {
 	int t = 0;
 
@@ -575,33 +588,32 @@ static void assign_target(struct mount_entry *e)
 	ConfigureParams.SCSI.target[t].nDeviceType = e->dt;
 	ConfigureParams.SCSI.target[t].bDiskInserted = true;
 	ConfigureParams.SCSI.target[t].bWriteProtected = false;
-	if (e->pending_idx >= 0)
-		pending_disks[e->pending_idx].target = t;
+	printf("EWOK-ASSETS: %s -> scsi target %d (%s)\n", e->base, t,
+		e->dt == DEVTYPE_CD ? "cd" : "hd");
 }
 
 void Ewok_AutoMountDisks(void)
 {
 	char user_disks_dir[512];
-	static struct mount_entry entries[MAX_PENDING_DISKS * 2 + 8];
-	int entry_count = 0;
 	DIR *d;
 	struct dirent *de;
 
 	pending_disk_count = 0;
+	mount_entry_count = 0;
 	if (!get_user_disks_dir(user_disks_dir, sizeof(user_disks_dir)))
 		return;
 	snprintf(pending_src_dir, sizeof(pending_src_dir), "%s", RES_DISKS_DIR);
 	snprintf(pending_dst_dir, sizeof(pending_dst_dir), "%s", user_disks_dir);
 	ensure_dir_exists(user_disks_dir);
 
-	/* bundled images: mount existing user copies now, record the
-	 * missing ones as pending (prepared after the window shows) */
+	/* bundled images: the user copies (existing or pending) are what
+	 * gets mounted; the missing ones are prepared after the window
+	 * shows */
 	d = opendir(RES_DISKS_DIR);
 	if (d != NULL) {
 		while ((de = readdir(d)) != NULL) {
 			char src_path[512], user_path[512];
 			char base[256];
-			bool packed = false;
 
 			if (de->d_name[0] == '.')
 				continue;
@@ -610,34 +622,28 @@ void Ewok_AutoMountDisks(void)
 			if (!is_regular_file(src_path))
 				continue;
 			snprintf(base, sizeof(base), "%s", de->d_name);
-			if (has_suffix_ci(base, ".zip")) {
+			if (has_suffix_ci(base, ".zip"))
 				/* shipped packed: user copy is unpacked */
 				base[strlen(base) - 4] = '\0';
-				packed = true;
-			}
 			snprintf(user_path, sizeof(user_path), "%s/%s",
 				 user_disks_dir, base);
-			if (is_regular_file(user_path)) {
-				if (entry_count <
-				    (int)(sizeof(entries) / sizeof(entries[0]))) {
-					struct mount_entry *e = &entries[entry_count++];
-					snprintf(e->base, sizeof(e->base), "%s", base);
-					e->dt = devtype_for(base);
-					e->pending_idx = -1;
-				}
-			} else if (pending_disk_count < MAX_PENDING_DISKS &&
-				   entry_count <
-				   (int)(sizeof(entries) / sizeof(entries[0]))) {
-				struct pending_disk *p =
-					&pending_disks[pending_disk_count];
-				snprintf(p->name, sizeof(p->name), "%s", base);
-				p->packed = packed;
-				p->target = -1;
-				struct mount_entry *e = &entries[entry_count++];
+			if (!is_regular_file(user_path)) {
+				/* no user copy: without one the image can
+				 * never be mounted, skip it entirely when
+				 * the pending list is full */
+				if (pending_disk_count >= MAX_PENDING_DISKS)
+					continue;
+				snprintf(pending_disk_names[pending_disk_count],
+					sizeof(pending_disk_names[0]), "%s", base);
+				pending_disk_count++;
+			}
+			if (mount_entry_count <
+			    (int)(sizeof(mount_entries) /
+				  sizeof(mount_entries[0]))) {
+				struct mount_entry *e =
+					&mount_entries[mount_entry_count++];
 				snprintf(e->base, sizeof(e->base), "%s", base);
 				e->dt = devtype_for(base);
-				e->pending_idx = pending_disk_count;
-				pending_disk_count++;
 			}
 		}
 		closedir(d);
@@ -652,8 +658,9 @@ void Ewok_AutoMountDisks(void)
 
 			if (de->d_name[0] == '.')
 				continue;
-			for (int i = 0; i < entry_count; i++)
-				if (strcmp(entries[i].base, de->d_name) == 0) {
+			for (int i = 0; i < mount_entry_count; i++)
+				if (strcmp(mount_entries[i].base,
+					   de->d_name) == 0) {
 					known = true;
 					break;
 				}
@@ -663,26 +670,82 @@ void Ewok_AutoMountDisks(void)
 				 user_disks_dir, de->d_name);
 			if (!is_regular_file(path))
 				continue;
-			if (entry_count < (int)(sizeof(entries) / sizeof(entries[0]))) {
-				struct mount_entry *e = &entries[entry_count++];
-				snprintf(e->base, sizeof(e->base), "%s", de->d_name);
+			if (mount_entry_count <
+			    (int)(sizeof(mount_entries) /
+				  sizeof(mount_entries[0]))) {
+				struct mount_entry *e =
+					&mount_entries[mount_entry_count++];
+				snprintf(e->base, sizeof(e->base), "%s",
+					de->d_name);
 				e->dt = devtype_for(de->d_name);
-				e->pending_idx = -1;
 			}
 		}
 		closedir(d);
 	}
+}
 
-	/* hard disks first so the bootable disk lands on target 0 (the
-	 * ROM boots from SCSI id 0 by default), optical media after */
-	for (int pass = 0; pass < 2; pass++) {
-		for (int i = 0; i < entry_count; i++) {
-			if ((pass == 0) !=
-			    (entries[i].dt == DEVTYPE_HARDDISK))
+/*----------------------------------------------------------------------*/
+/*  target assignment: runs in Main_Init() after the pending user        */
+/*  copies are prepared, so the bootability sniff reads the real         */
+/*  images (a still-packed res/disks image could not be sniffed)         */
+/*----------------------------------------------------------------------*/
+
+/* Bootable-NeXT-disk sniff (macemu is_bootable_hfs_image equivalent):
+ * the boot ROM accepts a disk whose label sector starts with "NeXT",
+ * "dlV2" or "dlV3" (it cmp.l's the first longword against these) */
+static bool is_bootable_next_disk(const char *path)
+{
+	unsigned char magic[4];
+	int fd = open(path, O_RDONLY);
+	bool ok;
+
+	if (fd < 0)
+		return false;
+	ok = read_at_fd(fd, 0, magic, sizeof(magic)) &&
+		(memcmp(magic, "dlV3", 4) == 0 ||
+		 memcmp(magic, "dlV2", 4) == 0 ||
+		 memcmp(magic, "NeXT", 4) == 0);
+	close(fd);
+	return ok;
+}
+
+void Ewok_AssignDiskTargets(void)
+{
+	/* Three passes: bootable hard disks first so one of them lands on
+	 * target 0 (the default "sd" boot reads the label from target 0),
+	 * then optical media, then non-bootable hard disks.  With no
+	 * bootable hard disk the first CD gets target 0 and the ROM boots
+	 * it instead (NeXT CDs carry a disk label and boot via the sd
+	 * driver), e.g. an install CD next to an empty scratch disk */
+	for (int pass = 0; pass < 3; pass++) {
+		for (int i = 0; i < mount_entry_count; i++) {
+			struct mount_entry *e = &mount_entries[i];
+			char path[512];
+			bool bootable;
+			int group;
+
+			snprintf(path, sizeof(path), "%s/%s",
+				pending_dst_dir, e->base);
+			if (!is_regular_file(path))
+				continue;	/* extraction failed: leave it out */
+			bootable = e->dt == DEVTYPE_HARDDISK &&
+				is_bootable_next_disk(path);
+			group = bootable ? 0 : (e->dt == DEVTYPE_CD ? 1 : 2);
+			if (group != pass)
 				continue;
-			assign_target(&entries[i]);
+			if (bootable)
+				printf("EWOK-ASSETS: %s has a NeXT disk "
+					"label, it is bootable\n", e->base);
+			assign_target(e);
 		}
 	}
+
+	/* the boot device is whatever sits on target 0 */
+	if (ConfigureParams.SCSI.target[0].nDeviceType == DEVTYPE_CD &&
+	    ConfigureParams.SCSI.target[0].bDiskInserted)
+		printf("EWOK-ASSETS: no bootable hard disk, booting from "
+			"CD-ROM %s\n",
+			ConfigureParams.SCSI.target[0].szImageName);
 }
 
 /*----------------------------------------------------------------------*/
@@ -693,32 +756,21 @@ void Ewok_AutoMountDisks(void)
 
 /* Expected size of a user copy: a shipped raw image is copied as-is,
  * a shipped <name>.zip grows to its uncompressed size */
-static off_t pending_user_copy_size(const struct pending_disk *p)
+static off_t pending_user_copy_size(const char *disk_name)
 {
 	char src_path[512];
 	struct stat st;
 
 	snprintf(src_path, sizeof(src_path), "%s/%s",
-		pending_src_dir, p->name);
+		pending_src_dir, disk_name);
 	if (is_regular_file(src_path) && stat(src_path, &st) == 0)
 		return st.st_size;
 	char zip_path[512];
 	struct zip_entry_info ent;
 	snprintf(zip_path, sizeof(zip_path), "%s.zip", src_path);
-	if (zip_find_entry(zip_path, p->name, &ent))
+	if (zip_find_entry(zip_path, disk_name, &ent))
 		return (off_t)ent.usize;
 	return 0;
-}
-
-/* A pending copy failed: the user copy will never appear, so drop the
- * reserved SCSI target instead of mounting a missing file */
-static void fallback_pending(const struct pending_disk *p)
-{
-	if (p->target < 0 || p->target >= ESP_MAX_DEVS)
-		return;
-	ConfigureParams.SCSI.target[p->target].szImageName[0] = '\0';
-	ConfigureParams.SCSI.target[p->target].nDeviceType = DEVTYPE_NONE;
-	ConfigureParams.SCSI.target[p->target].bDiskInserted = false;
 }
 
 void Ewok_PrepareUserDisks(void)
@@ -727,8 +779,9 @@ void Ewok_PrepareUserDisks(void)
 		return;
 
 	if (!ensure_dir_exists(pending_dst_dir)) {
-		for (int i = 0; i < pending_disk_count; i++)
-			fallback_pending(&pending_disks[i]);
+		fprintf(stderr, "EWOK-ASSETS: cannot create %s, %d disk "
+			"image(s) left out\n", pending_dst_dir,
+			pending_disk_count);
 		pending_disk_count = 0;
 		return;
 	}
@@ -736,21 +789,23 @@ void Ewok_PrepareUserDisks(void)
 	static off_t pending_sizes[MAX_PENDING_DISKS];
 	copy_total_bytes = 0;
 	for (int i = 0; i < pending_disk_count; i++) {
-		pending_sizes[i] = pending_user_copy_size(&pending_disks[i]);
-		copy_total_bytes += pending_sizes[i];
+		pending_sizes[i] = pending_user_copy_size(pending_disk_names[i]);
+		copy_total_bytes += (uint64_t)pending_sizes[i];
 	}
 
 	copy_base_bytes = 0;
 	copy_last_splash_ms = 0;
-	Screen_DiskCopySplash(0, (int)copy_total_bytes);
+	Screen_DiskCopySplash(0, (int)((copy_total_bytes + 1023) >> 10));
+	printf("EWOK-ASSETS: preparing %d disk image(s) in %s\n",
+		pending_disk_count, pending_dst_dir);
 
 	for (int i = 0; i < pending_disk_count; i++) {
 		char src_path[512];
 		char dst_path[512];
 		snprintf(src_path, sizeof(src_path), "%s/%s",
-			pending_src_dir, pending_disks[i].name);
+			pending_src_dir, pending_disk_names[i]);
 		snprintf(dst_path, sizeof(dst_path), "%s/%s",
-			pending_dst_dir, pending_disks[i].name);
+			pending_dst_dir, pending_disk_names[i]);
 		bool ok;
 		if (is_regular_file(src_path)) {
 			ok = copy_file_if_needed(src_path, dst_path,
@@ -759,17 +814,43 @@ void Ewok_PrepareUserDisks(void)
 			/* shipped images are packed as <name>.zip */
 			char zip_path[512];
 			snprintf(zip_path, sizeof(zip_path), "%s.zip", src_path);
-			ok = extract_zip_file(zip_path, pending_disks[i].name,
+			ok = extract_zip_file(zip_path, pending_disk_names[i],
 				dst_path, copy_progress_cb, NULL);
 		}
 		if (!ok)
-			fallback_pending(&pending_disks[i]);
-		copy_base_bytes += pending_sizes[i];
+			fprintf(stderr, "EWOK-ASSETS: preparing %s failed, "
+				"leaving it out\n", pending_disk_names[i]);
+		copy_base_bytes += (uint64_t)pending_sizes[i];
 	}
 
 	/* hide the splash again */
 	Screen_DiskCopySplash(0, -1);
 	pending_disk_count = 0;
+}
+
+/*----------------------------------------------------------------------*/
+/*  machine selection                                                    */
+/*----------------------------------------------------------------------*/
+
+/* The 2.5-era ROM (Rev_2.5_v66.BIN, loaded for non-Turbo 040 machines)
+ * accepts only INQUIRY device type 0 in its sd boot probe, so it can
+ * never boot a CD-ROM and dies with the "SCSI error" alert; the 3.3-era
+ * Turbo ROM (Rev_3.3_v74.BIN) accepts types 0/4/5/7/8 and boots the
+ * NeXTSTEP install CD.  EwokOS has no system preferences dialog, so the
+ * emulated machine is fixed to a Turbo model here.  That selects the
+ * v74 ROM and Configuration_SetSystemDefaults() supplies the matching
+ * Turbo settings (33MHz, MCCS1850 RTC, NCR53C90A SCSI, 4x32MB SIMMs -
+ * NEXTRam is a static 128MB array either way). */
+void Ewok_ConfigureMachine(void)
+{
+	if (ConfigureParams.System.nMachineType == NEXT_CUBE030)
+		ConfigureParams.System.nMachineType = NEXT_STATION;
+	ConfigureParams.System.bTurbo = true;
+	Configuration_SetSystemDefaults();
+	printf("EWOK: emulating a %s Turbo (Rev_3.3_v74 ROM, can boot "
+		"CD-ROM)\n",
+		ConfigureParams.System.nMachineType == NEXT_STATION ?
+			"NeXTstation" : "NeXTcube");
 }
 
 /*----------------------------------------------------------------------*/

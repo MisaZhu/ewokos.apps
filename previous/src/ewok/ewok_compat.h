@@ -97,8 +97,8 @@ extern "C" {
 /* provided by src/ewok/ewok_compat.c */
 int fputc(int c, FILE *stream);
 
-/* src/ewok/ewok_assets.c: copy bundled disks to the user dir and
- * auto-mount them on the free SCSI targets */
+/* src/ewok/ewok_assets.c: scan the bundled and user disks, record
+ * the missing user copies as pending */
 void Ewok_AutoMountDisks(void);
 
 /* src/ewok/ewok_assets.c: deferred preparation of the pending user
@@ -106,11 +106,20 @@ void Ewok_AutoMountDisks(void);
  * and before the SCSI layer opens the drives */
 void Ewok_PrepareUserDisks(void);
 
+/* src/ewok/ewok_assets.c: mount the user copies bootable-first onto
+ * the free SCSI targets (bootable hard disk, then CDs, then scratch
+ * disks); call after Ewok_PrepareUserDisks() */
+void Ewok_AssignDiskTargets(void);
+
 /* src/ewok/ewok_assets.c: stage the bundled ROM/EEPROM files into
  * the writable user dir (<home>/.previous/roms) and point the config
  * at the user copies, so the "missing ROM" dialog does not appear at
  * startup and ROM writes never touch the /apps tree */
 void Ewok_FixAssetPaths(void);
+
+/* src/ewok/ewok_assets.c: force a Turbo machine so the Rev_3.3_v74 ROM
+ * is loaded - the non-Turbo v66 ROM cannot boot CD-ROMs */
+void Ewok_ConfigureMachine(void);
 
 /* src/ewok/ewok_compat.c: turn on the libc heap lock before SDL threads
  * are spawned (call once, single-threaded, early in main()) */
