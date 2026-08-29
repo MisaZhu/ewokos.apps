@@ -79,3 +79,6 @@ extern Uint32 esp_counter;
 
 void ESP_InterruptHandler(void);
 void ESP_IO_Handler(void);
+
+/* EwokOS CD-boot diagnosis */
+void ESP_DiagSnapshot(void);

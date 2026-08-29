@@ -15,6 +15,33 @@ int inet_aton(const char *cp, struct in_addr *addr);
 /****************/
 /* -- SLIRP -- */
 
+/* EwokOS: stub out the whole SLIRP stack so the guest sees a working NIC
+ * (TX completes with interrupts as usual) but a silent network - no RX
+ * packets are ever injected. NetInfo/BOOTP will time out (hardclock works)
+ * and boot proceeds instead of hanging waiting for network replies. */
+#define EWOK_ENET_STUB 1
+
+#if EWOK_ENET_STUB
+
+void enet_slirp_queue_poll(void) {}
+void enet_slirp_input(Uint8 *pkt, int pkt_len) {
+    (void)pkt; (void)pkt_len;
+    static int dropped = 0;
+    if ((dropped++ % 64) == 0) {
+        fprintf(stderr, "[EN] stub: dropped tx packet #%d (%d bytes)\n", dropped-1, pkt_len);
+    }
+}
+void enet_slirp_start(void) {
+    static int once = 0;
+    if (!once) { once = 1; fprintf(stderr, "[EN] stub: SLIRP disabled (silent network)\n"); }
+}
+void enet_slirp_stop(void) {}
+
+/* slirp core (still linked in) calls back into these */
+int slirp_can_output(void) { return 0; }
+void slirp_output(const unsigned char *pkt, int pkt_len) { (void)pkt; (void)pkt_len; }
+
+#else
 
 /* slirp prototypes */
 int slirp_init(void);
@@ -155,3 +182,5 @@ void enet_slirp_start(void) {
         tick_func_handle=SDL_CreateThread(tick_func,"SLiRPTickThread", (void *)NULL);
     }
 }
+
+#endif /* EWOK_ENET_STUB */

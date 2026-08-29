@@ -320,9 +320,24 @@ void SCSIdisk_Receive_Command(Uint8 *cdb, Uint8 identify) {
     }
     
     SCSIdisk[SCSIbus.target].lun = lun;
-    
-    Log_Printf(LOG_SCSI_LEVEL, "SCSI command: Opcode = $%02x, target = %i, lun = %i\n", cdb[0], SCSIbus.target,lun);
-    
+
+    /* EwokOS CD-boot diagnosis: log every non-data command; rate-limit
+     * reads/writes to one line per 32 commands to follow LBA progress
+     * without flooding the serial console */
+    {
+        static int rw_count = 0;
+        if (cdb[0]==CMD_READ_SECTOR || cdb[0]==CMD_READ_SECTOR1 ||
+            cdb[0]==CMD_WRITE_SECTOR || cdb[0]==CMD_WRITE_SECTOR1) {
+            if ((++rw_count & 0x1F) == 0)
+                Log_Printf(LOG_WARN, "[SCSI] rw#%i: op=$%02x lba=%u count=%u target=%i\n",
+                           rw_count, cdb[0], (unsigned)SCSI_GetOffset(cdb[0], cdb),
+                           SCSI_GetCount(cdb[0], cdb), SCSIbus.target);
+        } else {
+            Log_Printf(LOG_WARN, "[SCSI] command: Opcode = $%02x, target = %i, lun = %i\n",
+                       cdb[0], SCSIbus.target, lun);
+        }
+    }
+
     SCSI_Emulate_Command(cdb);
 }
 

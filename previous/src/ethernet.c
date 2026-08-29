@@ -248,6 +248,9 @@ void EN_CounterHi_Read(void) { // 0x0200600f
 }
 
 static void enet_tx_interrupt(Uint8 intr) {
+    /* EwokOS CD-boot diagnosis */
+    fprintf(stderr, "[EN] tx_interrupt intr=$%02x tx_status=$%02x mask=$%02x\n",
+            intr, enet.tx_status, enet.tx_mask);
     enet.tx_status|=intr;
     if (enet.tx_status&enet.tx_mask) {
         set_interrupt(INT_EN_TX, SET_INT);
@@ -255,6 +258,9 @@ static void enet_tx_interrupt(Uint8 intr) {
 }
 
 static void enet_rx_interrupt(Uint8 intr) {
+    /* EwokOS CD-boot diagnosis */
+    fprintf(stderr, "[EN] rx_interrupt intr=$%02x rx_status=$%02x mask=$%02x\n",
+            intr, enet.rx_status, enet.rx_mask);
     enet.rx_status|=intr;
     if (enet.rx_status&enet.rx_mask) {
         set_interrupt(INT_EN_RX, SET_INT);
@@ -714,7 +720,18 @@ static void new_enet_io(void) {
 
 void ENET_IO_Handler(void) {
 	CycInt_AcknowledgeInterrupt();
-	
+
+	/* EwokOS CD-boot diagnosis: is the periodic ENET IO handler ever run? */
+	{
+		static int enet_io_calls = 0;
+		if (enet_io_calls == 0 || enet_io_calls % 200000 == 0) {
+			fprintf(stderr, "[EN] ENET_IO_Handler call #%d reset=%d stopped=%d recv_state=%d\n",
+			        enet_io_calls, !!(enet.reset&EN_RESET), (int)enet_stopped,
+			        receiver_state);
+		}
+		enet_io_calls++;
+	}
+
 	if (enet.reset&EN_RESET) {
 		Log_Printf(LOG_WARN, "Stopping Ethernet Transmitter/Receiver");
 		enet_stopped=true;

@@ -430,7 +430,12 @@ void Hardclock_InterruptHandler ( void )
 {
 	CycInt_AcknowledgeInterrupt();
 	if ((hardclock_csr&HARDCLOCK_ENABLE) && (latch_hardclock>0)) {
-//		Log_Printf(LOG_WARN,"[INT] throwing hardclock %lld", host_time_us());
+        /* EwokOS CD-boot diagnosis: confirm the guest hardclock actually fires */
+        /*static int hc_ticks = 0;
+        if ((hc_ticks++ % 1000) == 0) {
+            fprintf(stderr, "[HC] tick #%d latch=%d csr=$%02x\n", hc_ticks-1, latch_hardclock, hardclock_csr);
+        }
+        */
         set_interrupt(INT_TIMER,SET_INT);
         Uint64 now = host_time_us();
         host_hardclock(latch_hardclock, now - hardClockLastLatch);

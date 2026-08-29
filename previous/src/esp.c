@@ -274,6 +274,15 @@ void ESP_Command_Write(void) {
 void ESP_Status_Read(void) { // 0x02014004
     IoMem[IoAccessCurrentAddress & IO_SEG_MASK]=(status&STAT_MASK)|(SCSIbus.phase&STAT_PHASE);
  	Log_Printf(LOG_ESPREG_LEVEL,"ESP Status read at $%08x val=$%02x PC=$%08x\n", IoAccessCurrentAddress, IoMem[IoAccessCurrentAddress & IO_SEG_MASK], m68k_getpc());
+    /* EwokOS CD-boot diagnosis: rate-limited poll detector; a guest that
+     * hangs spinning on the status register will show up here */
+    {
+        static int status_reads = 0;
+        if ((++status_reads & 0xFFFF) == 0)
+            fprintf(stderr, "[ESP] Status polled x%i: val=$%02x (status=$%02x phase=$%02x) PC=$%08x\n",
+                    status_reads, IoMem[IoAccessCurrentAddress & IO_SEG_MASK],
+                    status, SCSIbus.phase&STAT_PHASE, (unsigned)m68k_getpc());
+    }
 }
 
 void ESP_SelectBusID_Write(void) {
@@ -284,8 +293,13 @@ void ESP_SelectBusID_Write(void) {
 void ESP_IntStatus_Read(void) { // 0x02014005
     IoMem[IoAccessCurrentAddress & IO_SEG_MASK]=intstatus;
     Log_Printf(LOG_ESPREG_LEVEL,"ESP IntStatus read at $%08x val=$%02x PC=$%08x\n", IoAccessCurrentAddress, IoMem[IoAccessCurrentAddress & IO_SEG_MASK], m68k_getpc());
-    
+
+    /* EwokOS CD-boot diagnosis: every read while an interrupt is pending
+     * is the guest acknowledging it; absence of these after a raise means
+     * the guest is stuck elsewhere */
     if (status&STAT_INT) {
+            fprintf(stderr, "[ESP] IntStatus read: intstat=$%02x -> IRQ ack PC=$%08x\n",
+                    intstatus, (unsigned)m68k_getpc());
             intstatus = 0x00;
             status &= ~(STAT_VGC | STAT_PE | STAT_GE);
             //seqstep = 0x00; /* FIXME: Is the data sheet really wrong with this? */
@@ -389,6 +403,9 @@ void esp_fifo_clear(void) {
 
 /* Functions for handling dual ranked command register */
 void esp_command_write(Uint8 cmd) {
+    /* EwokOS CD-boot diagnosis: every guest ESP command, so the last
+     * action before a hang is visible */
+    fprintf(stderr, "[ESP] cmd write: $%02x%s\n", cmd, (cmd&CMD_DMA)?" (dma)":"");
     if ((command[1]&CMD_CMD)==CMD_RESET && (cmd&CMD_CMD)!=CMD_NOP) {
         Log_Printf(LOG_WARN, "ESP command write: Chip reset in command register, not executing command.\n");
     } else {
@@ -563,15 +580,29 @@ void ESP_InterruptHandler(void) {
     esp_raise_irq();
 }
 
+/* EwokOS CD-boot diagnosis: one-line snapshot of the ESP/SCSI state for
+ * the periodic heartbeat, so the bus state at the hang point is visible */
+void ESP_DiagSnapshot(void) {
+    fprintf(stderr, "[ESP-state] phase=$%02x status=$%02x intstat=$%02x counter=%u state=%i dmactrl=$%02x seqstep=%i\n",
+            SCSIbus.phase&STAT_PHASE, status, intstatus, (unsigned)esp_counter,
+            esp_state, esp_dma.control, seqstep);
+}
+
 
 void esp_raise_irq(void) {
     if(!(status & STAT_INT)) {
         status |= STAT_INT;
-        
+
         if (esp_dma.control&ESPCTRL_ENABLE_INT) {
             set_interrupt(INT_SCSI, SET_INT);
         }
-        
+
+        /* EwokOS CD-boot diagnosis: unconditional, so a lost/gated IRQ
+         * at the hang point is visible on the serial console */
+        fprintf(stderr, "[ESP] IRQ raise: intstat=$%02x status=$%02x phase=$%02x enint=%i state=%i\n",
+                intstatus, status, SCSIbus.phase&STAT_PHASE,
+                !!(esp_dma.control&ESPCTRL_ENABLE_INT), esp_state);
+
         if (LOG_ESPCMD_LEVEL == LOG_WARN) {
             printf("[ESP] Raise IRQ: state=");
             switch (esp_state) {
@@ -612,11 +643,12 @@ void esp_raise_irq(void) {
 void esp_lower_irq(void) {
     if (status & STAT_INT) {
         status &= ~STAT_INT;
-        
+
         set_interrupt(INT_SCSI, RELEASE_INT);
-        
-        Log_Printf(LOG_ESPCMD_LEVEL, "[ESP] Lower IRQ\n");
-        
+
+        /* EwokOS CD-boot diagnosis: unconditional */
+        fprintf(stderr, "[ESP] IRQ lower\n");
+
         esp_finish_command();
     }
 }
@@ -693,6 +725,8 @@ void esp_select(bool atn) {
     /* First select our target */
     Uint8 target = selectbusid & BUSID_DID; /* Get bus ID from register */
     bool timeout = SCSIdisk_Select(target);
+    /* EwokOS CD-boot diagnosis: show every selection and its outcome */
+    Log_Printf(LOG_WARN, "[ESP] Select target %i: %s\n", target, timeout ? "TIMEOUT" : "ok");
     if (timeout) {
         /* If a timeout occurs, generate disconnect interrupt */
         intstatus = INTR_DC;
@@ -757,11 +791,16 @@ bool esp_transfer_done(bool write) {
     if (esp_counter == 0) { /* Transfer done */
         intstatus = INTR_FC;
         status |= STAT_TC;
+        /* EwokOS CD-boot diagnosis */
+        Log_Printf(LOG_WARN, "[ESP] DMA transfer done: TC (counter reached 0)\n");
         CycInt_AddRelativeInterruptUs(ESP_DELAY, 20, INTERRUPT_ESP);
         return true;
     } else if ((write && SCSIbus.phase!=PHASE_DI) || (!write && SCSIbus.phase!=PHASE_DO)) { /* Phase change detected */
         esp_command_clear();
         intstatus = INTR_BS;
+        /* EwokOS CD-boot diagnosis */
+        Log_Printf(LOG_WARN, "[ESP] DMA transfer done: phase change (residual %i bytes, scsi %i)\n",
+                   esp_counter, scsi_buffer.size);
         CycInt_AddRelativeInterruptUs(ESP_DELAY, 20, INTERRUPT_ESP);
         return true;
     } /* else continue transfering data, no interrupt */

@@ -9,6 +9,7 @@
 
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/select.h>
@@ -128,5 +129,14 @@ void Ewok_EnableHeapLock(void);
 #ifdef __cplusplus
 }
 #endif
+
+/* EwokOS diagnosis: the libc abort() is _exit(1) followed by an
+ * infinite loop, with no message on the console. Wrap it so every
+ * abort() call site identifies itself on stderr before dying. */
+#define abort() do { \
+	fprintf(stderr, "ABORT at %s:%d\n", __FILE__, __LINE__); \
+	fflush(stderr); \
+	abort(); \
+} while (0)
 
 #endif /* PREVIOUS_EWOK_COMPAT_H */

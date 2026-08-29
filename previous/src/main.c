@@ -413,6 +413,75 @@ void Main_EventHandlerInterrupt() {
     CycInt_AcknowledgeInterrupt();
     Main_EventHandler();
     CycInt_AddRelativeInterruptUs((1000*1000)/200, 0, INTERRUPT_EVENT_LOOP); // poll events with 200 Hz
+    /* EwokOS CD-boot diagnosis: periodic heartbeat on the serial console,
+     * so a frozen guest (still running, waiting for an interrupt that
+     * never comes) can be told apart from a dead emulator process */
+    {
+        extern void ESP_DiagSnapshot(void);
+        extern void m68k_dumpstate_2(unsigned int pc, unsigned int *nextpc);
+        extern void Disasm(FILE *f, unsigned int addr, unsigned int *nextpc, int cnt, int engine);
+        extern Uint32 DBGMemory_ReadLong(Uint32 addr);
+        static int beats = 0;
+        if (++beats >= 500) { /* every ~2.5 emulated seconds */
+            unsigned int pc = (unsigned int)m68k_getpc();
+            unsigned int nextpc;
+            beats = 0;
+            fprintf(stderr, "[HB] alive: PC=$%08x cycles=%lld\n",
+                    (unsigned)pc, (long long)nCyclesMainCounter);
+            ESP_DiagSnapshot();
+            /* guest kernel variables (NeXTSTEP 3.3 m68k kernel symbol table):
+             *  0x040B6CD8 = _time (timeval: tv_sec, tv_usec) - advances iff
+             *               the hardclock interrupt reaches the guest
+             *  0x040B6D1C = _need_ast[0]
+             *  0x040B7410 = default_pset+0x108 (runq) - idle loop waits on it
+             *  0x040C32E8 = processor_array+0x108 - second idle-loop check */
+            fprintf(stderr, "[HB] guest: _time=(%u,%u) need_ast0=$%08x pset108=$%08x parr108=$%08x\n",
+                    DBGMemory_ReadLong(0x040B6CD8), DBGMemory_ReadLong(0x040B6CDC),
+                    DBGMemory_ReadLong(0x040B6D1C), DBGMemory_ReadLong(0x040B7410),
+                    DBGMemory_ReadLong(0x040C32E8));
+            /* walk the BSD allproc chain (p_nxt at +0x08, p_pid is the
+             * low halfword at +0x22, p_comm at +0x11c) */
+            {
+                Uint32 p = DBGMemory_ReadLong(0x040B71E4); /* _allproc */
+                int n = 0, j;
+                while (p && n < 24) {
+                    char comm[17];
+                    Uint32 c;
+                    for (j = 0; j < 4; j++) {
+                        c = DBGMemory_ReadLong(p + 0x11c + j*4);
+                        comm[j*4+0] = (c>>24)&0xff; comm[j*4+1] = (c>>16)&0xff;
+                        comm[j*4+2] = (c>>8)&0xff;  comm[j*4+3] = c&0xff;
+                    }
+                    comm[16] = 0;
+                    for (j = 0; j < 16; j++) if (!comm[j]) break;
+                    comm[j] = 0;
+                    fprintf(stderr, "[HB] proc @$%08x pid=%d comm=%s\n", p,
+                            (int)(DBGMemory_ReadLong(p + 0x20) & 0xFFFF), comm);
+                    p = DBGMemory_ReadLong(p + 0x08); /* p_nxt */
+                    n++;
+                }
+            }
+            /* dump default_pset: it contains the threads queue head (the
+             * complete thread list on a UP system) - offsets get decoded
+             * offline, then every thread's wait_event can be listed */
+            {
+                int i;
+                fprintf(stderr, "[HB] pset @0x040B7308:\n");
+                for (i = 0; i < 0x140; i += 16) {
+                    fprintf(stderr, "  +%03x: %08x %08x %08x %08x\n", i,
+                            DBGMemory_ReadLong(0x040B7308+i), DBGMemory_ReadLong(0x040B7308+i+4),
+                            DBGMemory_ReadLong(0x040B7308+i+8), DBGMemory_ReadLong(0x040B7308+i+12));
+                }
+            }
+            /* dump guest registers (SR shows the interrupt mask) and
+             * disassemble the code at PC, so a guest spin loop reveals
+             * what it is waiting for */
+            m68k_dumpstate_2(pc, &nextpc);
+            fprintf(stderr, "[HB] code at PC:\n");
+            Disasm(stderr, pc, &nextpc, 8, 0 /* DISASM_ENGINE_UAE */);
+            fflush(stderr);
+        }
+    }
 }
 
 /*-----------------------------------------------------------------------*/
