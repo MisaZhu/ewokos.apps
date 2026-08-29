@@ -9,6 +9,11 @@
  *  <name>.zip is unpacked into the user directory; while that runs a
  *  "preparing disk" splash with byte progress is shown.
  *
+ *  An image exactly the size of a NeXT floppy (720K/1.44M/2.88M - the
+ *  only sizes Floppy_CheckSize() accepts) is inserted into a floppy
+ *  drive instead of a SCSI target, also mounted from its user copy,
+ *  so guest writes to the floppy persist across reboots as well.
+ *
  *  SCSI targets are filled bootable-first (macemu boot-candidate
  *  equivalent): a hard disk whose label sector starts with the
  *  "NeXT"/"dlV2"/"dlV3" magic the boot ROM checks for is bootable and
@@ -546,6 +551,34 @@ static SCSI_DEVTYPE devtype_for(const char *name)
 	return DEVTYPE_HARDDISK;
 }
 
+/* defined with the deferred preparation below */
+static off_t pending_user_copy_size(const char *disk_name);
+
+/* Floppy media sizes - the only sizes Floppy_CheckSize() accepts, so
+ * an image of exactly one of these sizes can only ever be used as a
+ * floppy; the size comes from the user copy when it exists, else
+ * from the shipped image (raw size, or the zip's uncompressed size) */
+static bool is_floppy_image(const char *base, const char *user_path)
+{
+	struct stat st;
+	off_t size;
+
+	if (is_regular_file(user_path) && stat(user_path, &st) == 0)
+		size = st.st_size;
+	else
+		size = pending_user_copy_size(base);
+	return size == 737280 || size == 1474560 || size == 2949120;
+}
+
+static SCSI_DEVTYPE classify_image(const char *base, const char *user_path)
+{
+	if (devtype_for(base) == DEVTYPE_CD)
+		return DEVTYPE_CD;
+	if (is_floppy_image(base, user_path))
+		return DEVTYPE_FLOPPY;
+	return DEVTYPE_HARDDISK;
+}
+
 #define MAX_PENDING_DISKS 16
 
 /* shipped images whose user copy does not exist yet: recorded by
@@ -643,7 +676,7 @@ void Ewok_AutoMountDisks(void)
 				struct mount_entry *e =
 					&mount_entries[mount_entry_count++];
 				snprintf(e->base, sizeof(e->base), "%s", base);
-				e->dt = devtype_for(base);
+				e->dt = classify_image(base, user_path);
 			}
 		}
 		closedir(d);
@@ -677,7 +710,7 @@ void Ewok_AutoMountDisks(void)
 					&mount_entries[mount_entry_count++];
 				snprintf(e->base, sizeof(e->base), "%s",
 					de->d_name);
-				e->dt = devtype_for(de->d_name);
+				e->dt = classify_image(de->d_name, path);
 			}
 		}
 		closedir(d);
@@ -711,6 +744,36 @@ static bool is_bootable_next_disk(const char *path)
 
 void Ewok_AssignDiskTargets(void)
 {
+	int flp_count = 0;
+
+	/* Floppy images go into the floppy drives (drive 0 first),
+	 * mounted from the user copies like the SCSI disks; the floppy
+	 * controller opens them when Floppy_Init() runs at reset */
+	for (int i = 0; i < mount_entry_count; i++) {
+		struct mount_entry *e = &mount_entries[i];
+		char path[512];
+
+		if (e->dt != DEVTYPE_FLOPPY)
+			continue;
+		snprintf(path, sizeof(path), "%s/%s",
+			pending_dst_dir, e->base);
+		if (!is_regular_file(path))
+			continue;	/* extraction failed: leave it out */
+		if (flp_count >= FLP_MAX_DRIVES) {
+			fprintf(stderr, "EWOK-ASSETS: no free floppy drive "
+				"for %s\n", e->base);
+			continue;
+		}
+		snprintf(ConfigureParams.Floppy.drive[flp_count].szImageName,
+			FILENAME_MAX, "%s", path);
+		ConfigureParams.Floppy.drive[flp_count].bDriveConnected = true;
+		ConfigureParams.Floppy.drive[flp_count].bDiskInserted = true;
+		ConfigureParams.Floppy.drive[flp_count].bWriteProtected = false;
+		printf("EWOK-ASSETS: %s -> floppy drive %d\n", e->base,
+			flp_count);
+		flp_count++;
+	}
+
 	/* Three passes: bootable hard disks first so one of them lands on
 	 * target 0 (the default "sd" boot reads the label from target 0),
 	 * then optical media, then non-bootable hard disks.  With no
@@ -724,6 +787,8 @@ void Ewok_AssignDiskTargets(void)
 			bool bootable;
 			int group;
 
+			if (e->dt == DEVTYPE_FLOPPY)
+				continue;	/* already in a floppy drive */
 			snprintf(path, sizeof(path), "%s/%s",
 				pending_dst_dir, e->base);
 			if (!is_regular_file(path))
@@ -738,6 +803,15 @@ void Ewok_AssignDiskTargets(void)
 					"label, it is bootable\n", e->base);
 			assign_target(e);
 		}
+	}
+
+	/* no SCSI device at all but a floppy inserted: boot from the
+	 * floppy, the default 'sd' boot could never find it */
+	if (flp_count > 0 &&
+	    ConfigureParams.SCSI.target[0].nDeviceType == DEVTYPE_NONE) {
+		ConfigureParams.Boot.nBootDevice = BOOT_FLOPPY;
+		printf("EWOK-ASSETS: no SCSI disk, booting from floppy "
+			"drive 0\n");
 	}
 
 	/* the boot device is whatever sits on target 0 */

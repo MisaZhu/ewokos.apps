@@ -107,7 +107,8 @@ void Ewok_AutoMountDisks(void);
  * and before the SCSI layer opens the drives */
 void Ewok_PrepareUserDisks(void);
 
-/* src/ewok/ewok_assets.c: mount the user copies bootable-first onto
+/* src/ewok/ewok_assets.c: mount the user copies - floppy-sized
+ * images go into the floppy drives, the rest bootable-first onto
  * the free SCSI targets (bootable hard disk, then CDs, then scratch
  * disks); call after Ewok_PrepareUserDisks() */
 void Ewok_AssignDiskTargets(void);

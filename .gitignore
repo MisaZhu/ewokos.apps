@@ -100,3 +100,9 @@ libs/ffmpeg/lib/libswscale/libswscale.version
 libs/ffmpeg/lib/doc/config.texi
 libs/ffmpeg/lib/doc/config.texi
 macemu/host/gencpu
+previous/src/cpu/cpudefs.c
+previous/src/cpu/cpuemu_31.c
+previous/src/cpu/cpuemu_32.c
+previous/src/cpu/cpustbl.c
+previous/src/cpu/cputbl.h
+previous/host/gencpu
