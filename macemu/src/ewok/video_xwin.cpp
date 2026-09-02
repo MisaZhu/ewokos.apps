@@ -153,6 +153,7 @@ static uint8 *stale_shadow = NULL;
 static graph_t *frame_graph = NULL;
 static graph_t *stale_frame_graph = NULL;
 static uint8 frame_pal[256 * 3];      // Current palette (RGB)
+static uint32_t frame_pal_argb[256];  // Pre-built ARGB lookup (avoids per-pixel shifts)
 
 static pthread_mutex_t frame_lock = PTHREAD_MUTEX_INITIALIZER;
 static volatile bool frame_pending = false;
@@ -578,22 +579,24 @@ static void convert_rows(const uint8 *src_fb, uint32 y0, uint32 y1)
 		case VDEPTH_4BIT: ppb = 2; bpp = 4; mask = 15; break;
 		default:          ppb = 1; bpp = 8; mask = 255; break;
 		}
-		for (uint32 y = y0; y <= y_end; y++) {
-			const uint8 *src = src_fb + y * bpr;
-			for (uint32 x = 0; x < w; x++) {
-				int idx;
-				if (ppb == 1) {
-					idx = src[x];
-				} else {
-					int bitpos = 8 - ((x % ppb) + 1) * bpp;
-					idx = (src[x / ppb] >> bitpos) & mask;
-				}
-				uint8 r = frame_pal[idx * 3 + 0];
-				uint8 g = frame_pal[idx * 3 + 1];
-				uint8 b = frame_pal[idx * 3 + 2];
-				dst[x] = 0xff000000 | (r << 16) | (g << 8) | b;
+		if (ppb == 1) {
+			// 8-bit: direct ARGB table lookup, no per-pixel shifts
+			for (uint32 y = y0; y <= y_end; y++) {
+				const uint8 *src = src_fb + y * bpr;
+				for (uint32 x = 0; x < w; x++)
+					dst[x] = frame_pal_argb[src[x]];
+				dst += w;
 			}
-			dst += w;
+		} else {
+			for (uint32 y = y0; y <= y_end; y++) {
+				const uint8 *src = src_fb + y * bpr;
+				for (uint32 x = 0; x < w; x++) {
+					int bitpos = 8 - ((x % ppb) + 1) * bpp;
+					int idx = (src[x / ppb] >> bitpos) & mask;
+					dst[x] = frame_pal_argb[idx];
+				}
+				dst += w;
+			}
 		}
 		break;
 	}
@@ -888,10 +891,10 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 			if (bottom > fh - 1) bottom = fh - 1;
 
 			if (scale != 1.0f) {
-				// Scaled present: the dirty rows only gate WHETHER to
-				// present (frame_pending) — once presenting, rescale and
-				// blit the whole frame.  Dirty-region math stays on the
-				// unscaled frame_graph path below.
+				// Scaled present: scale the dirty row band only (with a
+				// 1-row bilinear margin) and blit just the scaled band to
+				// the window.  For large dirty regions or full repaints,
+				// fall back to the whole-frame scale.
 				if (scaled == NULL || scaled->w != scaled_w || scaled->h != scaled_h) {
 					graph_t *tmp = graph_new(NULL, scaled_w, scaled_h);
 					if (scaled != NULL)
@@ -899,9 +902,49 @@ static void on_xwin_repaint(xwin_t *win, graph_t *g)
 					scaled = tmp;
 				}
 				if (scaled != NULL) {
-					graph_scale_tof_fast(fg, scaled, scale);
-					graph_blt(scaled, 0, 0, scaled_w, scaled_h,
-						g, offset_x, offset_y, scaled_w, scaled_h);
+					int band_h = bottom - top + 1;
+					bool partial = incremental && !layout_changed &&
+						band_h < fh / 4;
+
+					if (partial) {
+						// Expand by 1 row for bilinear interpolation margin
+						int src_y0 = (top > 0) ? top - 1 : 0;
+						int src_y1 = (bottom < fh - 1) ? bottom + 1 : fh - 1;
+						int src_rows = src_y1 - src_y0 + 1;
+						// Map to scaled coordinates using the same floor
+						// mapping as the full-frame scale
+						int dst_y0 = (int)(src_y0 * scale);
+						int dst_y1 = (int)((src_y1 + 1) * scale) - 1;
+						if (dst_y1 >= scaled_h) dst_y1 = scaled_h - 1;
+						int dst_rows = dst_y1 - dst_y0 + 1;
+						if (dst_rows > 0 && src_rows > 0) {
+							graph_t src_band, dst_band;
+							memset(&src_band, 0, sizeof(src_band));
+							memset(&dst_band, 0, sizeof(dst_band));
+							src_band.buffer = fg->buffer + src_y0 * fw;
+							src_band.w = fw;
+							src_band.h = src_rows;
+							dst_band.buffer = scaled->buffer + dst_y0 * scaled_w;
+							dst_band.w = scaled_w;
+							dst_band.h = dst_rows;
+							graph_scale_tof_fast(&src_band, &dst_band, scale);
+							graph_blt(scaled, 0, dst_y0, scaled_w, dst_rows,
+								g, offset_x, offset_y + dst_y0,
+								scaled_w, dst_rows);
+						}
+					} else {
+						graph_scale_tof_fast(fg, scaled, scale);
+						// Blit only the scaled dirty band (saves full-frame copy)
+						int dst_y0 = (int)(top * scale);
+						int dst_y1 = (int)((bottom + 1) * scale) - 1;
+						if (dst_y1 >= scaled_h) dst_y1 = scaled_h - 1;
+						if (dst_y0 < 0) dst_y0 = 0;
+						int dst_band = dst_y1 - dst_y0 + 1;
+						if (dst_band > 0)
+							graph_blt(scaled, 0, dst_y0, scaled_w, dst_band,
+								g, offset_x, offset_y + dst_y0,
+								scaled_w, dst_band);
+					}
 				} else {
 					// Cache allocation failed: let graph_blt() scale directly
 					graph_blt(fg, 0, 0, fw, fh,
@@ -1192,6 +1235,10 @@ void XWIN_monitor_desc::set_palette(uint8 *pal, int num)
 		frame_pal[i * 3 + 0] = pal[c * 3 + 0];
 		frame_pal[i * 3 + 1] = pal[c * 3 + 1];
 		frame_pal[i * 3 + 2] = pal[c * 3 + 2];
+		frame_pal_argb[i] = 0xff000000u |
+			((uint32_t)pal[c * 3 + 0] << 16) |
+			((uint32_t)pal[c * 3 + 1] << 8) |
+			(uint32_t)pal[c * 3 + 2];
 	}
 	// Rows already converted used the old palette: reconvert them all
 	force_full = true;
@@ -1372,8 +1419,10 @@ bool VideoInit(bool classic)
 	monitor->switch_to_current_mode();
 
 	// Default palette: gray ramp
-	for (int i = 0; i < 256; i++)
+	for (int i = 0; i < 256; i++) {
 		frame_pal[i * 3 + 0] = frame_pal[i * 3 + 1] = frame_pal[i * 3 + 2] = i;
+		frame_pal_argb[i] = 0xff000000u | ((uint32_t)i << 16) | ((uint32_t)i << 8) | (uint32_t)i;
+	}
 
 	xwin_set_visible(xwin, true);
 
