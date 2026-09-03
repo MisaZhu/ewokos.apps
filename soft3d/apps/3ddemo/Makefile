@@ -31,4 +31,5 @@ $(TASK): $(TASK_OBJS) $(GLCOMMON_LIB) \
 	cp -r res $(TASK_DIR)
 
 clean:
-	rm -f $(TASK_OBJS)
+	rm -rf $(ALL_ARCH_DIRS)
+	rm -f *.o

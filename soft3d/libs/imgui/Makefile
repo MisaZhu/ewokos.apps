@@ -38,6 +38,9 @@ $(ARCH)/backends/%.o: backends/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+.PHONY: clean
+
 clean:
-	rm -f $(LIB_IMGUI_OBJS)
+	rm -rf $(ALL_ARCH_DIRS)
+	rm -f *.o backends/*.o
 	rm -f $(IMGUI)

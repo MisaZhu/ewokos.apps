@@ -13,6 +13,9 @@ $(PORTABLEGL): $(LIB_PORTABLEGL_OBJS)
 	$(AR) rcs $(PORTABLEGL) $(LIB_PORTABLEGL_OBJS)
 	cp -r include/* $(BUILD_DIR)/include
 
+.PHONY: clean
+
 clean:
-	rm -f $(LIB_PORTABLEGL_OBJS)
+	rm -rf $(ALL_ARCH_DIRS)
+	rm -f src/*.o
 	rm -f $(PORTABLEGL)

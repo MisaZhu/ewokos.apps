@@ -1,7 +1,7 @@
 SW_ROOT_DIR=../../..
 include $(SW_ROOT_DIR)/make.inc
 
-BUILD_DIR = $(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)
+BUILD_DIR = $(EWOKOS_SYS_DIR)/build_$(ARCH)/$(HW)
 ROOTFS_BIN = $(BUILD_DIR)/rootfs/bin/x
 
 CFLAGS += -I.. -I../external -I $(BUILD_DIR)/include/SDL2 -D__ewokos__
@@ -62,16 +62,17 @@ $(ARCH)/%.o: %.cpp
 
 # Link C programs
 $(ROOTFS_BIN)/%: $(ARCH)/%.o $(LD_LIB_DEPS) \
-		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libewoksys.a \
-		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libewokstl.a \
-		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libx++.a \
-		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libx.a \
-		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libfont.a \
-		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libgraph.a \
-		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libwidget++.a \
-		$(SYS_ROOT_DIR)/build_$(ARCH)/$(HW)/lib/libcxx.a
+		$(SDK_DIR)/lib/libewoksys.a \
+		$(SDK_DIR)/lib/libewokstl.a \
+		$(SDK_DIR)/lib/libx++.a \
+		$(SDK_DIR)/lib/libx.a \
+		$(SDK_DIR)/lib/libfont.a \
+		$(SDK_DIR)/lib/libgraph.a \
+		$(SDK_DIR)/lib/libwidget++.a \
+		$(SDK_DIR)/lib/libcxx.a
 	$(LD) -Ttext=100 $< $(GLCOMMON_LIB) -o $@ $(LDFLAGS)
 
 clean:
-	rm -f $(C_OBJS) $(CPP_OBJS)
+	rm -rf $(ALL_ARCH_DIRS)
+	rm -f *.o
 	rm -f $(ALL_BINS)

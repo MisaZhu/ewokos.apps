@@ -32,4 +32,5 @@ $(TASK): $(TASK_OBJS) $(IMGUI_LIBS) \
 	cp -r res $(TASK_DIR)
 
 clean:
-	rm -f $(TASK_OBJS)
+	rm -rf $(ALL_ARCH_DIRS)
+	rm -f *.o

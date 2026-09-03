@@ -36,6 +36,9 @@ $(ARCH)/src/%.o: src/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+.PHONY: clean
+
 clean:
-	rm -f $(LIB_GLCOMMON_OBJS)
+	rm -rf $(ALL_ARCH_DIRS)
+	rm -f src/*.o
 	rm -f $(GLCOMMON)
