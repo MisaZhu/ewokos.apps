@@ -23,9 +23,6 @@ extern "C" {
 }
 #endif
 
-/* EwokOS stdio has putc() but no fputc(); a real function (not a macro),
- * so GCC's fprintf-format optimizer cannot emit fputc() calls on its own */
-
 /* EwokOS fcntl.h has no O_ACCMODE */
 #ifndef O_ACCMODE
 #define O_ACCMODE 3
@@ -44,7 +41,6 @@ void tzset(void);
 int fsync(int fd);
 int ftruncate(int fd, off_t length);
 int system(const char *command);
-int fputc(int c, FILE *stream);
 
 /* creat() is a classic Unix idiom not present in the EwokOS libc */
 static inline int creat(const char *path, mode_t mode)

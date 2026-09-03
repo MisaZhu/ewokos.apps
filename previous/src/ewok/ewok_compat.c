@@ -6,12 +6,6 @@
 #include <stdbool.h>
 #include <ewoksys/proc.h>
 
-/* fputc() is not in the EwokOS libc, map it onto putc() */
-int fputc(int c, FILE *stream)
-{
-	return putc(c, stream);
-}
-
 /*
  * EwokOS turns the libc heap lock (_proc_global_need_lock) on only from
  * libewoksys thread_create(). SDL creates its threads through

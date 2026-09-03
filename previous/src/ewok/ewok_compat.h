@@ -95,9 +95,6 @@ typedef char *caddr_t;
 extern "C" {
 #endif
 
-/* provided by src/ewok/ewok_compat.c */
-int fputc(int c, FILE *stream);
-
 /* src/ewok/ewok_assets.c: scan the bundled and user disks, record
  * the missing user copies as pending */
 void Ewok_AutoMountDisks(void);

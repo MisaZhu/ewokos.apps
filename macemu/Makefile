@@ -42,7 +42,7 @@ DUMMY_OBJS = $(patsubst %,$(ARCH)/dummy/%.o,$(DUMMY_SRCS))
 XPLAT_OBJS = $(ARCH)/xplat/video_blit.o
 
 EWOK_OBJS = $(ARCH)/ewok/vm_alloc_ewok.o $(ARCH)/ewok/sigsegv_ewok.o \
-	$(ARCH)/ewok/rpc_stub.o $(ARCH)/ewok/ewok_compat.o \
+	$(ARCH)/ewok/rpc_stub.o \
 	$(ARCH)/ewok/video_xwin.o $(ARCH)/ewok/audio_pcm.o \
 	$(ARCH)/ewok/ether_ewok.o
 
