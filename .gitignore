@@ -106,3 +106,8 @@ previous/src/cpu/cpuemu_32.c
 previous/src/cpu/cpustbl.c
 previous/src/cpu/cputbl.h
 previous/host/gencpu
+macemu/src/uae_cpu/cpudefs.cpp
+macemu/src/uae_cpu/cpuemu.cpp
+macemu/src/uae_cpu/cpustbl_nf.cpp
+macemu/src/uae_cpu/cpustbl.cpp
+macemu/src/uae_cpu/cputbl.h
