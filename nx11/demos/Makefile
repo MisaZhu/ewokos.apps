@@ -1,4 +1,4 @@
-DIRS = nxdemo x11demo nxterm
+DIRS = nxdemo x11demo nxterm xtetris xmine xfreecell xedit xcalc
 
 all: $(DIRS)
 
