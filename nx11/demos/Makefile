@@ -1,6 +1,4 @@
-
-DIRS = macemu nesemu soft3d doom cards mine previous nx11
-#	video browser saver minivmac
+DIRS = nxdemo x11demo nxterm
 
 all: $(DIRS)
 
@@ -9,7 +7,7 @@ $(DIRS):
 
 .PHONY: all clean $(DIRS)
 
-clean:	
+clean:
 	@for dir in $(DIRS); do \
 		$(MAKE) -C $$dir clean; \
 	done
