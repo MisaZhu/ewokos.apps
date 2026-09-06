@@ -7,6 +7,22 @@
 #include <ewoksys/kernel_tic.h>
 #include <ewoksys/klog.h>
 
+/*
+ * xBrowser render/network diagnostics. Silenced by default so the console is
+ * not flooded during normal browsing; build with -DXBROWSER_DEBUG=1 to enable.
+ * Mirrors the EWOK_HTTPS_TLS_DEBUG switch in libtinyhttpsc. The "if (0)" form
+ * keeps argument expressions referenced so perf-timing locals do not trip
+ * -Wunused when logging is off.
+ */
+#ifndef XBROWSER_DEBUG
+#define XBROWSER_DEBUG 0
+#endif
+#if !XBROWSER_DEBUG
+/* Gate klog() itself (every klog() here is an [xBrowser] trace). The macro's
+ * self-reference is not re-expanded, so the real klog() stays under "if (0)". */
+#define klog(...) do { if (0) klog(__VA_ARGS__); } while (0)
+#endif
+
 namespace litehtml {
 void reset_parse_style_profile();
 void dump_parse_style_profile();

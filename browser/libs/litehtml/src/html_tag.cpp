@@ -13,6 +13,23 @@
 #include "el_before_after.h"
 
 /*
+ * xBrowser render/network diagnostics. Silenced by default so the console is
+ * not flooded during normal browsing; build with -DXBROWSER_DEBUG=1 to enable.
+ * Mirrors the EWOK_HTTPS_TLS_DEBUG switch in libtinyhttpsc. The "if (0)" form
+ * keeps argument expressions referenced so perf-timing locals do not trip
+ * -Wunused when logging is off. The [litehtml] corruption guard log below is
+ * intentionally NOT gated: it only fires on real DOM slot corruption.
+ */
+#ifndef XBROWSER_DEBUG
+#define XBROWSER_DEBUG 0
+#endif
+#if XBROWSER_DEBUG
+#define WB_LOG(...) klog(__VA_ARGS__)
+#else
+#define WB_LOG(...) do { if (0) klog(__VA_ARGS__); } while (0)
+#endif
+
+/*
  * O(1), non-dereferencing heap-membership test provided by the EwokOS libc
  * (libgloss/compat.c). Used to validate m_children slots before litehtml
  * dereferences them - see child_slot_sane() below.
@@ -223,7 +240,7 @@ void dump_parse_style_profile()
 	{
 		return;
 	}
-	klog("[xBrowser] parse styles detail: nodes=%u inline=%u ms init_font=%u ms basic=%u ms flow=%u ms size=%u ms box=%u ms line_list=%u ms background=%u ms children=%u ms\n",
+	WB_LOG("[xBrowser] parse styles detail: nodes=%u inline=%u ms init_font=%u ms basic=%u ms flow=%u ms size=%u ms box=%u ms line_list=%u ms background=%u ms children=%u ms\n",
 		g_parse_style_profile.nodes,
 		g_parse_style_profile.inline_style_ms,
 		g_parse_style_profile.init_font_ms,
@@ -4460,7 +4477,7 @@ static bool child_slot_sane(const litehtml::html_tag* parent, const litehtml::el
 
 litehtml::element::ptr litehtml::html_tag::find_adjacent_sibling( const element::ptr& el, const css_selector& selector, bool apply_pseudo /*= true*/, bool* is_pseudo /*= 0*/ )
 {
-	element::ptr ret;
+	element::ptr ret = 0;
 	int slot_idx = 0;
 	int slot_count = (int)m_children.size();
 	for(auto& e : m_children)
@@ -4867,7 +4884,7 @@ litehtml::element::ptr litehtml::html_tag::get_element_by_point(int x, int y, in
 {
 	if(!is_visible()) return 0;
 
-	element::ptr ret;
+	element::ptr ret = 0;
 
 	std::map<int, bool> zindexes;
 
@@ -5612,7 +5629,7 @@ void litehtml::html_tag::draw_children_box(uint_ptr hdc, int x, int y, const pos
 	position browser_wnd;
 	doc->container()->get_client_rect(browser_wnd);
 
-	element::ptr el;
+	element::ptr el = 0;
 	for (auto& item : m_children)
 	{
 		el = item;

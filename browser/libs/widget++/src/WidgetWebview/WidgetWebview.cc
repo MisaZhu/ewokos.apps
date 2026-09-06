@@ -19,6 +19,22 @@
 
 using namespace Ewok;
 
+/*
+ * xBrowser render/network diagnostics. Silenced by default so the console is
+ * not flooded during normal browsing; build with -DXBROWSER_DEBUG=1 to enable.
+ * Mirrors the EWOK_HTTPS_TLS_DEBUG switch in libtinyhttpsc. The "if (0)" form
+ * keeps argument expressions referenced so perf-timing locals and helpers such
+ * as debug_hash_text() do not trip -Wunused when logging is off.
+ */
+#ifndef XBROWSER_DEBUG
+#define XBROWSER_DEBUG 0
+#endif
+#if !XBROWSER_DEBUG
+/* Gate klog() itself (every klog() here is an [xBrowser] trace). The macro's
+ * self-reference is not re-expanded, so the real klog() stays under "if (0)". */
+#define klog(...) do { if (0) klog(__VA_ARGS__); } while (0)
+#endif
+
 static const uint32_t kLayoutDebounceMs = 30;
 
 static std::string strip_script_blocks(const std::string& html, int* removed_count)
