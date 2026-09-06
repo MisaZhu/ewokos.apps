@@ -12,6 +12,13 @@
 #include <ewoksys/klog.h>
 #include "el_before_after.h"
 
+/*
+ * O(1), non-dereferencing heap-membership test provided by the EwokOS libc
+ * (libgloss/compat.c). Used to validate m_children slots before litehtml
+ * dereferences them - see child_slot_sane() below.
+ */
+extern "C" int ewok_ptr_in_heap(const void* p);
+
 namespace litehtml {
 void profile_apply_stylesheet(uint32_t selector_count, uint64_t start_ms);
 void profile_select(uint64_t start_ms);
@@ -4426,11 +4433,42 @@ void litehtml::html_tag::get_redraw_box(litehtml::position& pos, int x /*= 0*/, 
 	}
 }
 
+/*
+ * Validate one m_children slot before litehtml dereferences it.
+ *
+ * This litehtml was hand-ported from std::shared_ptr ownership to raw element*
+ * pointers, which dropped the reference counting that used to keep a child
+ * alive exactly as long as some container referenced it. A heap overflow or
+ * use-after-free elsewhere can leave a stale small integer in a slot - the
+ * corrupt value differs every run and points into the binary's text segment
+ * (e.g. 0x473e / 0x5ca2), and the very next e->get_display() / e->select()
+ * dereferences it and takes a data abort deep inside the CSS sibling walk
+ * (html_tag::find_adjacent_sibling). ewok_ptr_in_heap rejects such a pointer
+ * WITHOUT reading through it, so we skip the damaged slot, keep the page
+ * rendering, and log which node was hit to pinpoint the corruption source.
+ */
+static bool child_slot_sane(const litehtml::html_tag* parent, const litehtml::element* e, int idx, int count, const char* walk)
+{
+	if(ewok_ptr_in_heap(e))
+	{
+		return true;
+	}
+	klog("[litehtml] %s: corrupt m_children slot parent=%s idx=%d/%d bad=%p\n",
+		walk, parent ? parent->get_tagName() : _t("?"), idx, count, (void*)e);
+	return false;
+}
+
 litehtml::element::ptr litehtml::html_tag::find_adjacent_sibling( const element::ptr& el, const css_selector& selector, bool apply_pseudo /*= true*/, bool* is_pseudo /*= 0*/ )
 {
 	element::ptr ret;
+	int slot_idx = 0;
+	int slot_count = (int)m_children.size();
 	for(auto& e : m_children)
 	{
+		if(!child_slot_sane(this, e, slot_idx++, slot_count, "find_adjacent_sibling"))
+		{
+			continue;
+		}
 		if(e->get_display() != display_inline_text)
 		{
 			if(e == el)
@@ -4466,8 +4504,14 @@ litehtml::element::ptr litehtml::html_tag::find_adjacent_sibling( const element:
 litehtml::element::ptr litehtml::html_tag::find_sibling(const element::ptr& el, const css_selector& selector, bool apply_pseudo /*= true*/, bool* is_pseudo /*= 0*/)
 {
 	element::ptr ret = 0;
+	int slot_idx = 0;
+	int slot_count = (int)m_children.size();
 	for(auto& e : m_children)
 	{
+		if(!child_slot_sane(this, e, slot_idx++, slot_count, "find_sibling"))
+		{
+			continue;
+		}
 		if(e->get_display() != display_inline_text)
 		{
 			if(e == el)
