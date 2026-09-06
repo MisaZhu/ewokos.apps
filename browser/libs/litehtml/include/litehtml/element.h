@@ -151,6 +151,7 @@ protected:
 		virtual text_transform		get_text_transform() const;
 		virtual white_space			get_white_space() const;
 		virtual style_display		get_display() const;
+	virtual void			set_display(style_display) {}
 		virtual visibility			get_visibility() const;
 		virtual element_position	get_element_position(css_offsets* offsets = 0) const;
 		virtual void				get_inline_boxes(position::vector& boxes);

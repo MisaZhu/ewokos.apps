@@ -181,7 +181,7 @@ namespace litehtml
 		draw_positioned,
 	};
 
-#define  style_display_strings		_t("none;block;inline;inline-block;inline-table;list-item;table;table-caption;table-cell;table-column;table-column-group;table-footer-group;table-header-group;table-row;table-row-group")
+#define  style_display_strings		_t("none;block;inline;inline-block;inline-table;list-item;table;table-caption;table-cell;table-column;table-column-group;table-footer-group;table-header-group;table-row;table-row-group;flex;inline-flex;grid;inline-grid")
 
 	enum style_display
 	{
@@ -200,6 +200,10 @@ namespace litehtml
 		display_table_header_group,
 		display_table_row,
 		display_table_row_group,
+		display_flex,
+		display_inline_flex,
+		display_grid,
+		display_inline_grid,
 		display_inline_text,
 	};
 
@@ -355,7 +359,7 @@ namespace litehtml
 		clear_both
 	};
 
-#define  css_units_strings	_t("none;%;in;cm;mm;em;ex;pt;pc;px;dpi;dpcm;vw;vh;vmin;vmax")
+#define  css_units_strings	_t("none;%;in;cm;mm;em;ex;pt;pc;px;dpi;dpcm;vw;vh;vmin;vmax;rem;ch")
 
 	enum css_units
 	{
@@ -375,6 +379,8 @@ namespace litehtml
 		css_units_vh,
 		css_units_vmin,
 		css_units_vmax,
+		css_units_rem,
+		css_units_ch,
 	};
 
 #define  background_attachment_strings	_t("scroll;fixed")

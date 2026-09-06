@@ -164,6 +164,7 @@ namespace litehtml
 		virtual text_transform		get_text_transform() const override;
 		virtual white_space			get_white_space() const override;
 		virtual style_display		get_display() const override;
+	void				set_display(style_display d) override { m_display = d; }
 		virtual visibility			get_visibility() const override;
 		virtual void				parse_styles(bool is_reparse = false) override;
 		virtual void				draw(uint_ptr hdc, int x, int y, const position* clip) override;
@@ -229,6 +230,7 @@ namespace litehtml
 		void						draw_children_box(uint_ptr hdc, int x, int y, const position* clip, draw_flag flag, int zindex);
 		void						draw_children_table(uint_ptr hdc, int x, int y, const position* clip, draw_flag flag, int zindex);
 		int							render_box(int x, int y, int max_width, bool second_pass = false);
+		int											render_flex(int x, int y, int max_width, bool second_pass = false);
 		int							render_table(int x, int y, int max_width, bool second_pass = false);
 		int							fix_line_width(int max_width, element_float flt);
 		void						parse_background();

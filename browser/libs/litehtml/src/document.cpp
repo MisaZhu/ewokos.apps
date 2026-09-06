@@ -713,6 +713,25 @@ int litehtml::document::cvt_units( css_length& val, int fontSize, int size ) con
 	case css_units_vmax:
 		ret = (int)((double)std::max(m_media.height, m_media.width) * (double)val.val() / 100.0);
 		break;
+	case css_units_rem:
+		/* root element font size; fall back to the container default while the
+		 * root box has not been styled yet */
+		{
+			int root_sz = m_root ? m_root->get_font_size() : 0;
+			if(root_sz <= 0)
+			{
+				root_sz = m_container->get_default_font_size();
+			}
+			ret = round_f(val.val() * root_sz);
+			val.set_value((float) ret, css_units_px);
+		}
+		break;
+	case css_units_ch:
+		/* advance of "0"; approximated as half an em, which is what most
+		 * proportional faces measure within a few percent */
+		ret = round_f(val.val() * fontSize / 2);
+		val.set_value((float) ret, css_units_px);
+		break;
 	default:
 		ret = (int) val.val();
 		break;

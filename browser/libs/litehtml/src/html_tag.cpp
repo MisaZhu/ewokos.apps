@@ -800,7 +800,7 @@ void litehtml::html_tag::parse_styles(bool is_reparse)
 
 	m_el_position	= (element_position)	value_index((own_position && t_strcasecmp(own_position, _t("inherit"))) ? own_position : _t("static"),			element_position_strings,	element_position_fixed);
 	m_overflow		= (overflow)			value_index((own_overflow && t_strcasecmp(own_overflow, _t("inherit"))) ? own_overflow : _t("visible"),		overflow_strings,			overflow_visible);
-	m_display		= (style_display)		value_index((own_display && t_strcasecmp(own_display, _t("inherit"))) ? own_display : _t("inline"),			style_display_strings,		display_inline);
+	m_display		= (style_display)		value_index((own_display && t_strcasecmp(own_display, _t("inherit"))) ? own_display : _t("inline"),			style_display_strings,		  display_block);
 	m_box_sizing	= (box_sizing)			value_index((own_box_sizing && t_strcasecmp(own_box_sizing, _t("inherit"))) ? own_box_sizing : _t("content-box"),	box_sizing_strings,			box_sizing_content_box);
 
 	if(own_text_align && t_strcasecmp(own_text_align, _t("inherit")))
@@ -1445,6 +1445,11 @@ int litehtml::html_tag::render( int x, int y, int max_width, bool second_pass )
 	if (m_display == display_table || m_display == display_inline_table)
 	{
 		return render_table(x, y, max_width, second_pass);
+	}
+
+	if (m_display == display_flex || m_display == display_inline_flex)
+	{
+		return render_flex(x, y, max_width, second_pass);
 	}
 
 	return render_box(x, y, max_width, second_pass);
@@ -2108,11 +2113,18 @@ void litehtml::html_tag::get_line_left_right( int y, int def_right, int& ln_left
 			el_parent->get_line_left_right(y + m_pos.y, def_right + m_pos.x, ln_left, ln_right);
 		}
 		ln_right -= m_pos.x;
-		ln_left -= m_pos.x;
-
-		if(ln_left < 0)
+		/* Only translate ln_left when it marks a real float edge. A zero means
+		 * "no float up the chain" and must stay zero: subtracting a negative
+		 * m_pos.x (e.g. a full-bleed `margin-left:-50vw` ancestor) would
+		 * otherwise inflate it into a bogus left inset for every descendant.
+		 * This mirrors the `(w ? m_pos.x : 0)` guard in get_line_left(). */
+		if(ln_left != 0)
 		{
-			ln_left = 0;
+			ln_left -= m_pos.x;
+			if(ln_left < 0)
+			{
+				ln_left = 0;
+			}
 		}
 	}
 }
@@ -2565,20 +2577,20 @@ void litehtml::html_tag::add_positioned(const element::ptr &el)
 
 void litehtml::html_tag::calc_outlines( int parent_width )
 {
-	m_padding.left	= m_css_padding.left.calc_percent(parent_width);
-	m_padding.right	= m_css_padding.right.calc_percent(parent_width);
+	m_padding.left	= get_document()->cvt_units(m_css_padding.left,	m_font_size, parent_width);
+	m_padding.right	= get_document()->cvt_units(m_css_padding.right,	m_font_size, parent_width);
 
 	m_borders.left	= m_css_borders.left.width.calc_percent(parent_width);
 	m_borders.right	= m_css_borders.right.width.calc_percent(parent_width);
 
-	m_margins.left	= m_css_margins.left.calc_percent(parent_width);
-	m_margins.right	= m_css_margins.right.calc_percent(parent_width);
+	m_margins.left	= get_document()->cvt_units(m_css_margins.left,	m_font_size, parent_width);
+	m_margins.right	= get_document()->cvt_units(m_css_margins.right,	m_font_size, parent_width);
 
-	m_margins.top		= m_css_margins.top.calc_percent(parent_width);
-	m_margins.bottom	= m_css_margins.bottom.calc_percent(parent_width);
+	m_margins.top		= get_document()->cvt_units(m_css_margins.top,		m_font_size, parent_width);
+	m_margins.bottom	= get_document()->cvt_units(m_css_margins.bottom,	m_font_size, parent_width);
 
-	m_padding.top		= m_css_padding.top.calc_percent(parent_width);
-	m_padding.bottom	= m_css_padding.bottom.calc_percent(parent_width);
+	m_padding.top		= get_document()->cvt_units(m_css_padding.top,		m_font_size, parent_width);
+	m_padding.bottom	= get_document()->cvt_units(m_css_padding.bottom,	m_font_size, parent_width);
 }
 
 void litehtml::html_tag::calc_auto_margins(int parent_width)
@@ -3325,9 +3337,12 @@ int litehtml::html_tag::place_element(const element::ptr &el, int max_width)
 			switch(el->get_display())
 			{
 			case display_inline_block:
+			case display_inline_grid:
 				ret_width = el->render(line_ctx.left, line_ctx.top, line_ctx.right);
 				break;
 			case display_block:		
+			case display_flex:
+			case display_grid:
 				if(el->is_replaced() || el->is_floats_holder())
 				{
 					element::ptr el_parent = el->parent();
@@ -3412,6 +3427,8 @@ int litehtml::html_tag::place_element(const element::ptr &el, int max_width)
 				ret_width = el->render(line_ctx.left, line_ctx.top, line_ctx.width());
 				break;
 			case display_block:
+			case display_flex:
+			case display_grid:
 			case display_table_cell:
 			case display_table_caption:
 			case display_table_row:

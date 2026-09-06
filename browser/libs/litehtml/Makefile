@@ -23,6 +23,7 @@ LITEHTML_OBJS = \
 	$(ARCH)/src/el_base.o \
 	$(ARCH)/src/el_anchor.o \
 	$(ARCH)/src/html_tag.o \
+	$(ARCH)/src/flex_layout.o \
 	$(ARCH)/src/el_comment.o \
 	$(ARCH)/src/iterators.o \
 	$(ARCH)/src/background.o \
