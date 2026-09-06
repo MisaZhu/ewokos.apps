@@ -6,9 +6,10 @@
  * the aarch64/virt SDK libc (system/basic/libc) and the NX11 Xlib subset that
  * projects/nx11 installs into $(SDK_DIR)/include/nx11.
  *
- * Only the core libfltk is built: no OpenGL, no Xft, no X double-buffer
- * extension, no external image codecs.  XPM/XBM/BMP images and every widget
- * are still available because they are part of the core sources.
+ * Two archives are built: the core libfltk (every widget + XPM/XBM/BMP
+ * images) and libfltk_images (GIF/PNG/JPEG/PNM loaders).  The external codecs
+ * are enabled below and come from the SDK's libpng/libjpeg/libz; there is
+ * still no OpenGL, no Xft and no X double-buffer extension.
  *
  * NOTE: this file must be found BEFORE the SDK's own <config.h>, so the FLTK
  * Makefile puts -I<fltk-root> ahead of -I$(SDK_DIR)/include.
@@ -83,14 +84,21 @@
  * select()/poll() themselves, so USE_POLL stays 0. */
 #define USE_POLL 0
 
-/* --- external image libraries: not linked into core libfltk ------------ */
-/* #undef HAVE_LIBPNG */
-/* #undef HAVE_LIBZ */
-/* #undef HAVE_LIBJPEG */
-/* #undef HAVE_PNG_H */
+/* --- external image libraries (used by libfltk_images) ----------------- */
+/* The SDK ships libpng 1.6.12 + libjpeg + libz with headers directly in
+ * include/, so src/Fl_{PNG,JPEG}_Image.cxx compile their real decoders in and
+ * apps link -lfltk_images -lpng -ljpeg -lz.  png_get_valid() and
+ * png_set_tRNS_to_alpha() both exist in 1.6.12, so the tRNS->alpha
+ * transparency path is enabled.  HAVE_LIBPNG_PNG_H stays undefined because
+ * png.h lives at include/png.h, not include/libpng/png.h.  GIF/PNM/BMP need no
+ * external lib and are always built into libfltk_images. */
+#define HAVE_LIBPNG 1
+#define HAVE_LIBZ 1
+#define HAVE_LIBJPEG 1
+#define HAVE_PNG_H 1
 /* #undef HAVE_LIBPNG_PNG_H */
-/* #undef HAVE_PNG_GET_VALID */
-/* #undef HAVE_PNG_SET_TRNS_TO_ALPHA */
+#define HAVE_PNG_GET_VALID 1
+#define HAVE_PNG_SET_TRNS_TO_ALPHA 1
 
 /* --- threading: keep Fl::lock() inert; FLTK apps here are single-threaded */
 /* #undef HAVE_PTHREAD */

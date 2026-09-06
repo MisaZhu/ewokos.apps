@@ -17,8 +17,9 @@ include $(PROJS_ROOT_DIR)/make.inc
 ##     NONETWORK nano-X event node via nx11x_select() instead of select()ing a
 ##     dummy connection fd that would never become readable.
 ##
-## Builds libfltk.a (core widgets + XBM/XPM/BMP images) into the SDK and
-## installs the FL/ headers, then builds the demos.
+## Builds two archives into the SDK: libfltk.a (core widgets + XBM/XPM/BMP
+## images) and libfltk_images.a (GIF/PNG/JPEG/PNM loaders, which pull in the
+## SDK's libpng/libjpeg/libz), installs the FL/ headers, then builds the demos.
 ## ---------------------------------------------------------------------------
 
 ## EWOKOS selects the patched fl_wait()/fl_ready() in Fl_x.cxx.  The getc()
@@ -72,23 +73,44 @@ CPP_SRCS = \
 ## config.h) and compiles to nothing, but is kept to match upstream.
 C_SRCS = flstring scandir numericsort vsnprintf
 
+## Image-format loaders (verbatim from FLTK's src/Makefile IMGCPPFILES).  They
+## are kept in a SEPARATE libfltk_images.a so apps that never decode
+## PNG/JPEG don't drag in the codec libs - exactly how upstream splits it.
+## PNG/JPEG need the SDK's libpng/libjpeg/libz (enabled in config.h); GIF, PNM
+## and BMP are self-contained.  fl_images_core registers all of them with
+## Fl_Shared_Image via fl_register_images(); Fl_File_Icon2 and Fl_Help_Dialog
+## are the icon/help helpers built on top of the loaders.  None of these appear
+## in CPP_SRCS, so there is no object-file overlap with the core archive.
+IMG_SRCS = \
+	fl_images_core Fl_BMP_Image Fl_File_Icon2 Fl_GIF_Image \
+	Fl_Help_Dialog Fl_JPEG_Image Fl_PNG_Image Fl_PNM_Image
+
 CPP_OBJS = $(patsubst %,$(ARCH)/%.o,$(CPP_SRCS))
 C_OBJS   = $(patsubst %,$(ARCH)/%.o,$(C_SRCS))
+IMG_OBJS = $(patsubst %,$(ARCH)/%.o,$(IMG_SRCS))
 OBJS     = $(CPP_OBJS) $(C_OBJS)
 
 LIB_DIR = $(SDK_DIR)/lib
 INC_DIR = $(SDK_DIR)/include
 LIBFLTK = $(LIB_DIR)/libfltk.a
+LIBFLTK_IMG = $(LIB_DIR)/libfltk_images.a
 
 all: lib headers demos
 	@echo "fltk done."
 
-lib: $(LIBFLTK)
+lib: $(LIBFLTK) $(LIBFLTK_IMG)
 
 $(LIBFLTK): $(OBJS)
 	@mkdir -p $(dir $@)
 	rm -f $@
 	$(AR) rcs $@ $(OBJS)
+
+## Same .cxx compile rule as the core objects (see below); only the archive
+## membership differs.
+$(LIBFLTK_IMG): $(IMG_OBJS)
+	@mkdir -p $(dir $@)
+	rm -f $@
+	$(AR) rcs $@ $(IMG_OBJS)
 
 ## public headers: apps include <FL/Fl.H> from -I$(SDK_DIR)/include.
 ## config.h is deliberately NOT installed - it is an implementation detail and
@@ -113,6 +135,6 @@ $(ARCH)/%.o: src/%.c
 
 clean:
 	rm -rf $(ARCH)
-	rm -f $(LIBFLTK)
+	rm -f $(LIBFLTK) $(LIBFLTK_IMG)
 	rm -rf $(INC_DIR)/FL
 	@$(MAKE) -C demos clean

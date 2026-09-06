@@ -1,5 +1,13 @@
 ifeq ($(ewokos),)
-export ewokos= ~/work/ewokos
+# Default the EwokOS root to THIS repo, derived from make.inc's own location
+# (projects/make.inc -> repo root) so it is always an absolute path.  The old
+# "~/work/ewokos" default was handed to gcc verbatim - neither make nor gcc
+# expands '~' - which broke every -I$(SDK_DIR)/... (e.g. FLTK's <X11/Xlib.h>
+# under include/nx11) unless the caller exported ewokos= or passed
+# ewokos=/abs/path explicitly.  ':=' (not '=') is required: it captures
+# $(lastword $(MAKEFILE_LIST)) == make.inc at parse time, before the variable
+# is re-expanded later from the including Makefile.
+export ewokos := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 endif
 
 ifeq ($(ARCH),)
