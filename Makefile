@@ -1,5 +1,5 @@
 
-DIRS = macemu nesemu soft3d doom cards mine previous nx11
+DIRS = macemu nesemu soft3d doom cards mine previous nx11 fltk
 #	video browser saver minivmac
 
 all: $(DIRS)
