@@ -147,13 +147,18 @@ ed_insert(char ch)
 static void
 ed_newline(void)
 {
-	int	i;
+	int	i, tail;
 
 	if (nlines >= MAXLINES)
 		return;
+	tail = line_len(crow) - ccol;		/* chars after the cursor */
+	if (tail < 0)
+		tail = 0;
 	for (i = nlines; i > crow + 1; i--)
 		memcpy(lines[i], lines[i - 1], MAXCOLS);
-	strcpy(lines[crow + 1], &lines[crow][ccol]);
+	/* memmove, not strcpy: the rows of lines[][] are contiguous, so GCC
+	 * cannot rule out overlap and warns (-Wrestrict) on strcpy/strcat. */
+	memmove(lines[crow + 1], &lines[crow][ccol], (size_t)tail + 1);
 	lines[crow][ccol] = '\0';
 	nlines++;
 	crow++;
@@ -174,7 +179,7 @@ ed_backspace(void)
 	} else if (crow > 0) {
 		int	pl = line_len(crow - 1);
 		if (pl + l < MAXCOLS) {
-			strcat(lines[crow - 1], lines[crow]);
+			memmove(lines[crow - 1] + pl, lines[crow], (size_t)l + 1);
 			for (i = crow; i < nlines - 1; i++)
 				memcpy(lines[i], lines[i + 1], MAXCOLS);
 			nlines--;
@@ -196,7 +201,7 @@ ed_delete(void)
 	} else if (crow < nlines - 1) {
 		int	cl = line_len(crow + 1);
 		if (l + cl < MAXCOLS) {
-			strcat(lines[crow], lines[crow + 1]);
+			memmove(lines[crow] + l, lines[crow + 1], (size_t)cl + 1);
 			for (i = crow + 1; i < nlines - 1; i++)
 				memcpy(lines[i], lines[i + 1], MAXCOLS);
 			nlines--;
